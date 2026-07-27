@@ -2,13 +2,15 @@
 
 ## Status
 
-**Stage:** Phase 1 ledger extracted and verified over memory and real Azurite
-(`0.x`, public API unstable, unpublished)
+**Stage:** Phase 2 first-consumer migration implemented in RetireGolden;
+operational exit pending production Stripe traffic (`0.x`, public API unstable,
+unpublished)
 
-**Initial reference application:** RetireGolden, whose account API carries the
-production-tested implementation this component is extracted from
+**Initial reference application:** RetireGolden, whose account API supplied the
+production-tested implementation this component was extracted from
 (`api/src/lib/webhook-events.js` — a Stripe event ledger hardened by real
-webhook traffic and a test suite covering the concurrency corners).
+webhook traffic and a test suite covering the concurrency corners). Its Phase 2
+migration now replaces that local module with `@pegma/webhooks`.
 
 **License:** MIT
 
@@ -223,13 +225,23 @@ what it does.
 
 ### Phase 2 — first consumer
 
-RetireGolden swaps `webhook-events.js` for `@pegma/webhooks`. **Timing gate:
-after its storage migration's stage-soak week closes and the production
-deploy lands** (soak runs through ~2026-08-03) — swapping the code under soak
-would invalidate the soak. The port surface is designed to make this swap
-nearly mechanical; the application's existing webhook tests carry over as the
-acceptance bar. Exit: production Stripe traffic through the published-shape
-package, old collection rows knowingly stranded and swept by retention.
+RetireGolden has swapped `webhook-events.js` for `@pegma/webhooks`. The owner
+explicitly waived the storage-soak timing gate on 2026-07-27; this phase no
+longer waits for the previously planned soak through approximately 2026-08-03.
+The port surface made the swap nearly mechanical, and the application's
+existing webhook tests remain the acceptance bar.
+
+Because the package remains unpublished, RetireGolden temporarily consumes the
+exact npm-packed artifact built from Webhooks commit
+`cae69326d2148e867f05b80843e4a9d506ab061c`. That exercises the package's
+published shape without treating the artifact as a release or changing the
+package version.
+
+The operational exit remains open until production Stripe traffic runs through
+that package shape. The old `webhookEvents:event` rows are knowingly stranded:
+the new ledger writes and sweeps `webhookReceipts:stripe`, so the old rows must
+be removed by RetireGolden's one-time host storage cleanup rather than by
+package retention.
 
 ### Phase 3 — second source, shape's verdict
 
@@ -281,4 +293,7 @@ on the table.
       vitest, CI workflow mirroring storage-core's).
 - [x] Phase 1 extraction with the conformance-style suite.
 - [x] A README front section that leads with the at-least-once contract.
-- [ ] Coordinate Phase 2 timing against RetireGolden's storage-soak calendar.
+- [x] Implement the Phase 2 RetireGolden consumer migration (storage-soak
+      timing gate explicitly waived by the owner on 2026-07-27).
+- [ ] Verify production Stripe traffic through `@pegma/webhooks` and close
+      Phase 2.
