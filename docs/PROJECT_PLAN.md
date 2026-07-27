@@ -2,7 +2,7 @@
 
 ## Status
 
-**Stage:** scaffold established; Phase 1 ledger extraction has not begun
+**Stage:** Phase 1 ledger extracted and verified over memory and real Azurite
 (`0.x`, public API unstable, unpublished)
 
 **Initial reference application:** RetireGolden, whose account API carries the
@@ -279,6 +279,6 @@ on the table.
 
 - [x] Repository scaffolding to the ecosystem standard (package, tsconfig set,
       vitest, CI workflow mirroring storage-core's).
-- [ ] Phase 1 extraction with the conformance-style suite.
+- [x] Phase 1 extraction with the conformance-style suite.
 - [x] A README front section that leads with the at-least-once contract.
 - [ ] Coordinate Phase 2 timing against RetireGolden's storage-soak calendar.
