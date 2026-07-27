@@ -1,21 +1,32 @@
 import { TableClient } from "@azure/data-tables";
 import { createAzureTablesStore } from "@pegma/storage-azure-tables";
 import { fixedClock, type IsoTimestamp, type Logger } from "@pegma/spine";
+import { spawn as spawnChild } from "node:child_process";
+import { createServer } from "node:net";
 import {
   createMemoryStore,
   type CollectionDefinition,
   type CollectionStore,
   type Store,
 } from "@pegma/storage-core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, inject, it } from "vitest";
 
-import { TABLE_PORT } from "../../../test/azurite.js";
+import {
+  allocateAvailablePort,
+  waitForStartup,
+} from "../../../test/azurite.js";
 import {
   createWebhookLedger,
   webhookReceiptCollection,
   webhookReceiptKey,
   type WebhookReceipt,
 } from "./index.js";
+
+declare module "vitest" {
+  export interface ProvidedContext {
+    azuriteTablePort: number;
+  }
+}
 
 const ACCOUNT = "devstoreaccount1";
 const KEY =
@@ -24,7 +35,7 @@ const CONNECTION_STRING = [
   "DefaultEndpointsProtocol=http",
   `AccountName=${ACCOUNT}`,
   `AccountKey=${KEY}`,
-  `TableEndpoint=http://127.0.0.1:${TABLE_PORT}/${ACCOUNT};`,
+  `TableEndpoint=http://127.0.0.1:${inject("azuriteTablePort")}/${ACCOUNT};`,
 ].join(";");
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const NOW = "2026-07-27T12:00:00.000Z";
@@ -785,6 +796,70 @@ function ledgerConformance(name: string, freshStore: () => Store): void {
 
 ledgerConformance("webhook ledger / memory", createMemoryStore);
 ledgerConformance("webhook ledger / Azure Tables", freshAzureStore);
+
+describe("Azurite test lifecycle", () => {
+  it("rejects when the child process cannot start", async () => {
+    const missing = spawnChild(
+      `missing-azurite-executable-${process.pid}-${Date.now()}`,
+    );
+
+    await expect(waitForStartup(missing, 65_534, 1_000)).rejects.toThrow();
+  });
+
+  it("allocates around an occupied loopback port", async () => {
+    const blocker = createServer();
+    await new Promise<void>((resolve, reject) => {
+      blocker.once("error", reject);
+      blocker.listen({ host: "127.0.0.1", port: 0, exclusive: true }, resolve);
+    });
+    const address = blocker.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("Could not inspect the occupied test port.");
+    }
+
+    try {
+      expect(await allocateAvailablePort()).not.toBe(address.port);
+      expect(inject("azuriteTablePort")).toBeGreaterThan(0);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        blocker.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+    }
+  });
+
+  it("does not mistake an unrelated listener for the spawned service", async () => {
+    const blocker = createServer();
+    await new Promise<void>((resolve, reject) => {
+      blocker.once("error", reject);
+      blocker.listen({ host: "127.0.0.1", port: 0, exclusive: true }, resolve);
+    });
+    const address = blocker.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("Could not inspect the unrelated listener port.");
+    }
+    const unrelated = spawnChild(process.execPath, [
+      "-e",
+      "setTimeout(() => {}, 5000)",
+    ]);
+
+    try {
+      await expect(
+        waitForStartup(unrelated, address.port, 300),
+      ).rejects.toThrow(/within 300ms/);
+    } finally {
+      unrelated.kill();
+      await new Promise<void>((resolve, reject) => {
+        blocker.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+    }
+  });
+});
 
 describe("webhook receipt codec", () => {
   const codec = webhookReceiptCollection("stripe").codec;
