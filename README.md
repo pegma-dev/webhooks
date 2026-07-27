@@ -1,5 +1,6 @@
 # Webhooks
 
+[![CI](https://github.com/pegma-dev/webhooks/actions/workflows/ci.yml/badge.svg)](https://github.com/pegma-dev/webhooks/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Inbound webhook receipts for [Pegma](https://pegma.dev) components: idempotent
@@ -12,23 +13,20 @@ dedup, poison quarantine, and retention.
 ## What it promises — and what it refuses to
 
 Providers deliver webhooks **at least once**: retried, out of order, and
-sometimes twice at the same moment. This component gives a receiver the three
-things that model actually requires:
+sometimes twice at the same moment. Once extracted, this component will give a
+receiver the three things that model actually requires:
 
-- **Dedup** — `begin(eventId, type)` records a receipt exactly once per
-  provider event id (`insertIfAbsent` underneath), so a sequential redelivery
-  of a processed event short-circuits to an acknowledgement.
-- **Poison quarantine** — an event that keeps failing is given up on after a
-  bounded number of attempts and acknowledged, so the provider's retry storm
-  ends before it gets the endpoint auto-disabled. The quarantined receipt is
-  the durable, alert-worthy record for a human.
-- **Retention** — receipts are swept after a window that outlives the
-  provider's redelivery horizon, with conditional deletes so a receipt touched
-  mid-sweep survives.
+- **Dedup** — sequential redeliveries of a processed provider event id will
+  short-circuit to an acknowledgement.
+- **Poison quarantine** — an event that keeps failing will eventually be
+  acknowledged, while its durable receipt remains an alert-worthy record for a
+  human.
+- **Retention** — receipts will be swept after a window that outlives the
+  provider's redelivery horizon, using conditional deletes.
 
 It deliberately does **not** promise:
 
-- **Exactly-once.** Two *overlapping* deliveries of one event can both see
+- **Exactly-once.** Two _overlapping_ deliveries of one event can both see
   `new` and both process — there is no lease, on purpose. Each side effect
   behind your webhook must own its own idempotency. A component that hides
   this behind a lock is lying to you about a crashed lock-holder.
@@ -42,13 +40,14 @@ timestamps only.
 
 ## Where it fits
 
-`@pegma/webhooks` declares one collection over an injected
+`@pegma/webhooks` will declare one collection over an injected
 [`@pegma/storage-core`](https://github.com/pegma-dev/storage-core) `Store` and
-takes time and logging from
+will take time and logging from
 [`@pegma/spine`](https://github.com/pegma-dev/spine). Outbound webhooks —
-*sending* to someone else's endpoint — are a durable-outbox problem and live
+_sending_ to someone else's endpoint — are a durable-outbox problem and live
 with storage, not here.
 
+The scaffold is established, but ledger behavior has not been extracted yet.
 The design is extracted from a production Stripe webhook ledger in the
 RetireGolden account API, the ecosystem's reference application. See
 [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md) for the model, the design
