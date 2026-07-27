@@ -2,7 +2,7 @@
 
 ## Status
 
-**Stage:** Phase 1 scaffold established; ledger extraction has not begun
+**Stage:** scaffold established; Phase 1 ledger extraction has not begun
 (`0.x`, public API unstable, unpublished)
 
 **Initial reference application:** RetireGolden, whose account API carries the
