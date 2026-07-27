@@ -2,7 +2,7 @@
 
 ## Status
 
-**Stage:** planning; nothing extracted yet
+**Stage:** scaffold established; Phase 1 ledger extraction has not begun
 (`0.x`, public API unstable, unpublished)
 
 **Initial reference application:** RetireGolden, whose account API carries the
@@ -51,7 +51,7 @@ usually discovers in production:
    provider's event id or side effects happen twice.
 2. **Poison events.** An event that always fails is redelivered on the
    provider's schedule (Stripe: ~3 days). Answering 500 every time risks the
-   provider auto-disabling the endpoint — which takes down *every* webhook,
+   provider auto-disabling the endpoint — which takes down _every_ webhook,
    not just the poisoned one. At some point the receiver must give up,
    acknowledge, and preserve the failure somewhere a human will find it.
 3. **False confidence.** The tempting fixes overpromise. A dedup check before
@@ -141,7 +141,7 @@ event surfaces within a day of a provider's retry cadence), the receipt flips
 to `quarantined` and the caller acknowledges. The quarantined row is not a
 dead letter to be replayed automatically; it is a signal for a human. Attempt
 counting runs through an `update` decider, so two concurrent failures cannot
-both record attempt *n + 1* and defer quarantine.
+both record attempt _n + 1_ and defer quarantine.
 
 ### Signature verification stays with the host
 
@@ -277,8 +277,8 @@ on the table.
 
 ## Near-term backlog
 
-1. Repository scaffolding to the ecosystem standard (package, tsconfig set,
-   vitest, CI workflow mirroring storage-core's).
-2. Phase 1 extraction with the conformance-style suite.
-3. A README front section that leads with the at-least-once contract.
-4. Coordinate Phase 2 timing against RetireGolden's storage-soak calendar.
+- [x] Repository scaffolding to the ecosystem standard (package, tsconfig set,
+      vitest, CI workflow mirroring storage-core's).
+- [ ] Phase 1 extraction with the conformance-style suite.
+- [x] A README front section that leads with the at-least-once contract.
+- [ ] Coordinate Phase 2 timing against RetireGolden's storage-soak calendar.
