@@ -7,12 +7,6 @@ quarantine, and retention.
 > [!IMPORTANT]
 > Webhooks is in early `0.x` development. Its public API is not stable, it is
 > not published, and it is not ready for production use.
->
-> RetireGolden's Phase 2 consumer migration temporarily uses the exact
-> npm-packed artifact from commit
-> `cae69326d2148e867f05b80843e4a9d506ab061c` while production-traffic
-> verification remains open. This is integration evidence, not a release or a
-> general-availability signal.
 
 ## What it promises — and what it refuses to
 
