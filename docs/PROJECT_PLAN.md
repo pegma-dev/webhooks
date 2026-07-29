@@ -2,9 +2,8 @@
 
 ## Status
 
-**Stage:** Phase 2 first-consumer migration implemented in RetireGolden;
-operational exit pending production Stripe traffic (`0.x`, public API unstable,
-unpublished)
+**Stage:** Phase 3 release evidence accepted by the owner on 2026-07-29; ready
+for first public release (`0.x`, public API unstable, unpublished)
 
 **Initial reference application:** RetireGolden, whose account API supplied the
 production-tested implementation this component was extracted from
@@ -237,20 +236,30 @@ exact npm-packed artifact built from Webhooks commit
 published shape without treating the artifact as a release or changing the
 package version.
 
-The operational exit remains open until production Stripe traffic runs through
-that package shape. The old `webhookEvents:event` rows are knowingly stranded:
-the new ledger writes and sweeps `webhookReceipts:stripe`, so the old rows must
-be removed by RetireGolden's one-time host storage cleanup rather than by
-package retention.
+The operational exit originally required observing new production Stripe
+traffic through that package shape. On 2026-07-29, the owner explicitly
+accepted the migrated application's existing webhook suite, the exact packed
+artifact integration, and the production-hardened reference behavior as
+sufficient first-release evidence, closing Phase 2 without waiting for an
+additional live delivery. The old `webhookEvents:event` rows are knowingly
+stranded: the new ledger writes and sweeps `webhookReceipts:stripe`, so the old
+rows must be removed by RetireGolden's one-time host storage cleanup rather
+than by package retention.
 
 ### Phase 3 — second source, shape's verdict
 
-A second real provider through the same ledger in one host — the likely
-candidate is the support desk's inbound mail provider callbacks, whichever
-provider that lands on. This phase judges the multi-source generalization
-(the one thing Phase 1 adds beyond the reference implementation) and the
-quarantine ergonomics: does a quarantined row actually get found and triaged,
-or does it need a surfacing hook (see Open questions)?
+Pegma.dev now receives authenticated GitHub release webhooks through
+`@pegma/webhooks` on Cloudflare Workers with D1-backed storage. Together with
+RetireGolden's Stripe integration on Azure Tables, this exercises a second real
+provider, host, runtime, and storage adapter.
+
+This evidence does not exercise two providers through one ledger in the same
+host, and GitHub does not automatically retry failed webhook deliveries, so it
+does not add provider-driven quarantine evidence. On 2026-07-29, the owner
+explicitly accepted the cross-host evidence as sufficient for the first `0.x`
+release. Same-host multi-source operation and additional quarantine ergonomics
+remain post-release evidence work; the package does not claim either as a
+stronger delivery guarantee.
 
 ### Phase 4 — publish
 
@@ -269,11 +278,11 @@ proportion to the component. Revisit only if a real consumer arrives without
 an SDK to lean on.
 
 **Quarantine surfacing.** A quarantined receipt is alert-worthy, but the
-component has no opinion on alerting. Options: nothing (hosts poll or check
-logs), a spine `Logger` warn (cheap, already planned), or a spine EventBus
-notification (best-effort is acceptable for alerting — a missed notification
-still leaves the durable row). Lean: Logger warn now, EventBus notification
-if Phase 3 shows quarantines going unnoticed.
+component has no opinion on alerting. Phase 3 did not add provider-driven
+quarantine evidence because GitHub does not automatically retry failed
+deliveries. Keep the current spine `Logger` warning and durable row; revisit an
+EventBus notification only when a real consumer shows that those signals go
+unnoticed.
 
 **Overlap lease.** Should `begin` optionally lease an event so overlapping
 deliveries serialize? Lean **no** — it changes the concurrency contract from
@@ -282,10 +291,11 @@ confidence this component exists to avoid. Revisit only with evidence of a
 consumer whose side effects genuinely cannot own their idempotency.
 
 **Threshold and retention configuration.** Defaults of 5 and 30 days come
-from the reference implementation and Stripe's retry model. Per-source
-configuration is trivially justifiable; per-event-type is probably
-over-engineering. Decide in Phase 3 when a second provider's retry model is
-on the table.
+from the reference implementation and Stripe's retry model. GitHub's manual
+redelivery model supplied no evidence that another configuration surface is
+needed. Keep the defaults and defer per-source configuration until a consumer
+with a different automatic retry model requires it; per-event-type
+configuration remains out of scope.
 
 ## Near-term backlog
 
@@ -295,5 +305,12 @@ on the table.
 - [x] A README front section that leads with the at-least-once contract.
 - [x] Implement the Phase 2 RetireGolden consumer migration (storage-soak
       timing gate explicitly waived by the owner on 2026-07-27).
-- [ ] Verify production Stripe traffic through `@pegma/webhooks` and close
-      Phase 2.
+- [x] Close Phase 2 on the owner's explicit acceptance of the migrated suite,
+      exact packed artifact integration, and production-hardened reference
+      behavior (2026-07-29).
+- [x] Exercise a second real provider through Pegma.dev's GitHub release
+      integration and accept the cross-host evidence for the first `0.x`
+      release (2026-07-29).
+- [ ] Prepare and publish `@pegma/webhooks` as the first public `0.x`.
+- [ ] After release, exercise same-host multi-source operation and additional
+      provider-driven quarantine behavior when a suitable consumer arrives.
