@@ -53,3 +53,15 @@ agree again.
 The design is extracted from `api/src/lib/webhook-events.js` in the
 RetireGolden account API (production Stripe traffic). When behaviour here is
 ambiguous, that implementation and its tests are the precedent.
+
+## Release safety
+
+`@pegma/webhooks@0.1.0` is the first advertised release. The exact `0.0.0`
+package-name bootstrap remains isolated under npm's `bootstrap` dist-tag.
+
+Normal releases start from a protected signed annotated `vX.Y.Z` tag already
+on `origin/main`, followed by a verified GitHub release. The unprivileged
+preparation job runs the complete gate, checks package metadata and inventory,
+packs and smoke-tests the exact artifact, and records its hashes. Only the
+minimal publish job receives OIDC authority. There is no npm token or manual
+workflow fallback. See `docs/RELEASING.md`.

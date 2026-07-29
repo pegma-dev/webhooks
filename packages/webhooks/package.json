@@ -1,6 +1,6 @@
 {
   "name": "@pegma/webhooks",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Inbound webhook receipt handling with explicit at-least-once semantics.",
   "license": "MIT",
   "type": "module",
@@ -12,9 +12,7 @@
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",
     "dist/**/*.js",
-    "dist/**/*.js.map",
-    "src/**/*.ts",
-    "!src/**/*.test.ts"
+    "dist/**/*.js.map"
   ],
   "exports": {
     ".": {
