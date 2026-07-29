@@ -7,7 +7,7 @@ tag was already created as a protected, signed annotated tag.
 The exact `0.0.0` package-name bootstrap was published manually on 2026-07-29
 under npm's `bootstrap` dist-tag so npm trusted publishing could be configured.
 Do not repeat, move, unpublish, or reuse that version. npm also assigned
-`latest` to the initial version; publishing `0.1.0` moves `latest` to the first
+`latest` to the initial version; publishing `0.1.0` moved `latest` to the first
 advertised release.
 
 The registry records source commit
@@ -37,6 +37,13 @@ version, name the release-event commit, and be contained in `origin/main`.
   deletion, and non-fast-forward changes.
 
 ## First advertised release
+
+**Completed 2026-07-29.** Protected signed annotated tag `v0.1.0` names
+`67861144e0e36cb335f596469b631890fc9200bf`. GitHub release workflow run
+`30493801499` published through trusted-publisher OIDC. The registry artifact
+matches the workflow-prepared manifest exactly, carries SLSA provenance, and
+has integrity
+`sha512-iCz65n860Ty0bHB6RAChah27Is4dM65cpJLkn0yOFm5RbXRqYO3xwD1a3q+KzqjGZUlppUHebzN186ORNZcp+A==`.
 
 The reviewed release-preparation pull request changes the public workspace and
 lockfile to `0.1.0`, documents the release, and passes:

@@ -2,8 +2,9 @@
 
 ## Status
 
-**Stage:** Phases 1 through 3 are complete and `@pegma/webhooks@0.1.0` is
-prepared as the first advertised release (`0.x`, public API unstable)
+**Stage:** Phases 1 through 4 are complete. `@pegma/webhooks@0.1.0` is
+published from the protected signed `v0.1.0` release through npm
+trusted-publisher OIDC with provenance (`0.x`, public API unstable)
 
 **Initial reference application:** RetireGolden, whose account API supplied the
 production-tested implementation this component was extracted from
@@ -230,12 +231,13 @@ longer waits for the previously planned soak through approximately 2026-08-03.
 The port surface made the swap nearly mechanical, and the application's
 existing webhook tests remain the acceptance bar.
 
-Until the first advertised release, RetireGolden temporarily consumes the
-exact npm-packed artifact built from Webhooks commit
+RetireGolden migrated before the first advertised release and temporarily
+consumes the exact npm-packed artifact built from Webhooks commit
 `cae69326d2148e867f05b80843e4a9d506ab061c`. That exercises the package's
 published shape without treating the artifact as a release. The registry's
 `0.0.0` package-name bootstrap is isolated under the `bootstrap` dist-tag and
-is not a consumer release.
+is not a consumer release. Post-release consumer cleanup replaces the vendored
+artifact with exact `0.1.0`.
 
 The operational exit originally required observing new production Stripe
 traffic through that package shape. On 2026-07-29, the owner explicitly
@@ -271,6 +273,14 @@ publishes only from a protected signed annotated tag through the GitHub release
 workflow and npm trusted-publisher OIDC with provenance. Stability follows the
 ecosystem rule: breaking changes remain permitted until real consumers say
 otherwise.
+
+**Completed 2026-07-29:** protected signed annotated tag `v0.1.0` names
+`67861144e0e36cb335f596469b631890fc9200bf`. GitHub release workflow run
+`30493801499` prepared and published the exact artifact through OIDC. Registry
+integrity is
+`sha512-iCz65n860Ty0bHB6RAChah27Is4dM65cpJLkn0yOFm5RbXRqYO3xwD1a3q+KzqjGZUlppUHebzN186ORNZcp+A==`,
+SLSA provenance is present, `latest` points to `0.1.0`, and `bootstrap`
+remains at `0.0.0`.
 
 ## Open questions
 
@@ -317,7 +327,7 @@ configuration remains out of scope.
       release (2026-07-29).
 - [x] Prepare `@pegma/webhooks@0.1.0` and the protected signed-tag OIDC release
       path.
-- [ ] Publish `@pegma/webhooks@0.1.0` from the protected `v0.1.0` GitHub
-      release and verify registry integrity and provenance.
+- [x] Publish `@pegma/webhooks@0.1.0` from the protected `v0.1.0` GitHub
+      release and verify registry integrity and provenance (2026-07-29).
 - [ ] After release, exercise same-host multi-source operation and additional
       provider-driven quarantine behavior when a suitable consumer arrives.
