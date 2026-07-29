@@ -8,14 +8,9 @@ Inbound webhook receipt handling for
 quarantine, and retention.
 
 > [!IMPORTANT]
-> Webhooks is in early `0.x` development. Its public API is not stable, its
-> package is not published, and it is not ready for production use.
->
-> RetireGolden's Phase 2 consumer migration temporarily uses the exact
-> npm-packed artifact from commit
-> `cae69326d2148e867f05b80843e4a9d506ab061c` while production-traffic
-> verification remains open. This is integration evidence, not a release or a
-> general-availability signal.
+> `@pegma/webhooks@0.1.0` is the first advertised release. It publishes only
+> from a protected signed tag through npm trusted-publisher OIDC with
+> provenance. The public API remains unstable while the package is in `0.x`.
 
 ## What it promises — and what it refuses to
 

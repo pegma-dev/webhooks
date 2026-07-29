@@ -5,8 +5,9 @@ Inbound webhook receipt handling for
 quarantine, and retention.
 
 > [!IMPORTANT]
-> Webhooks is in early `0.x` development. Its public API is not stable, it is
-> not published, and it is not ready for production use.
+> `0.1.0` is the first advertised release, published through npm
+> trusted-publisher OIDC with provenance. The public API remains unstable
+> while the package is in `0.x`.
 
 ## What it promises — and what it refuses to
 

@@ -2,8 +2,8 @@
 
 ## Status
 
-**Stage:** Phase 3 release evidence accepted by the owner on 2026-07-29; ready
-for first public release (`0.x`, public API unstable, unpublished)
+**Stage:** Phases 1 through 3 are complete and `@pegma/webhooks@0.1.0` is
+prepared as the first advertised release (`0.x`, public API unstable)
 
 **Initial reference application:** RetireGolden, whose account API supplied the
 production-tested implementation this component was extracted from
@@ -230,11 +230,12 @@ longer waits for the previously planned soak through approximately 2026-08-03.
 The port surface made the swap nearly mechanical, and the application's
 existing webhook tests remain the acceptance bar.
 
-Because the package remains unpublished, RetireGolden temporarily consumes the
+Until the first advertised release, RetireGolden temporarily consumes the
 exact npm-packed artifact built from Webhooks commit
 `cae69326d2148e867f05b80843e4a9d506ab061c`. That exercises the package's
-published shape without treating the artifact as a release or changing the
-package version.
+published shape without treating the artifact as a release. The registry's
+`0.0.0` package-name bootstrap is isolated under the `bootstrap` dist-tag and
+is not a consumer release.
 
 The operational exit originally required observing new production Stripe
 traffic through that package shape. On 2026-07-29, the owner explicitly
@@ -263,10 +264,13 @@ stronger delivery guarantee.
 
 ### Phase 4 — publish
 
-First public `0.x` alongside the rest of the ecosystem's publishing wave,
-with the storage-core and spine version pins it was verified against.
-Stability follows the ecosystem rule: breaking changes permitted until real
-consumers say otherwise.
+`0.1.0` is the first advertised release, with the storage-core and spine
+version pins it was verified against. The exact `0.0.0` package-name bootstrap
+remains isolated under npm's `bootstrap` dist-tag. The advertised release
+publishes only from a protected signed annotated tag through the GitHub release
+workflow and npm trusted-publisher OIDC with provenance. Stability follows the
+ecosystem rule: breaking changes remain permitted until real consumers say
+otherwise.
 
 ## Open questions
 
@@ -311,6 +315,9 @@ configuration remains out of scope.
 - [x] Exercise a second real provider through Pegma.dev's GitHub release
       integration and accept the cross-host evidence for the first `0.x`
       release (2026-07-29).
-- [ ] Prepare and publish `@pegma/webhooks` as the first public `0.x`.
+- [x] Prepare `@pegma/webhooks@0.1.0` and the protected signed-tag OIDC release
+      path.
+- [ ] Publish `@pegma/webhooks@0.1.0` from the protected `v0.1.0` GitHub
+      release and verify registry integrity and provenance.
 - [ ] After release, exercise same-host multi-source operation and additional
       provider-driven quarantine behavior when a suitable consumer arrives.
