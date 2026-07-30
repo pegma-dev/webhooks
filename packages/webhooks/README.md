@@ -69,9 +69,10 @@ with a `TypeError`.
 
 The event type is provider-supplied triage data and never a storage key, so it
 is bounded rather than rejected: it is truncated to 256 characters, and a
-non-string value is stored as `null`. Both cases log a `warn`. A malformed type
-therefore cannot fail `begin` and leave the event without a receipt to count
-attempts against.
+non-string value is stored as `null`. Truncation and a non-nullish non-string
+each log a `warn`; an absent type (`null` or `undefined`) is recorded as `null`
+silently. A malformed type therefore cannot fail `begin` and leave the event
+without a receipt to count attempts against.
 
 Clock values and explicit sweep timestamps must use the canonical UTC ISO form
 with milliseconds produced by `Date.toISOString()`. Calling

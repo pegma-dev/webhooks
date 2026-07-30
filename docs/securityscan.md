@@ -119,8 +119,9 @@ file references.
 ### F-03 — `begin(eventId, type)` stores `type` without runtime validation or a length bound
 
 - **Status:** ✅ Resolved 2026-07-29 — `begin` now normalizes `type` at the
-  boundary (truncate at 256 characters, non-string to `null`, `warn` on both)
-  so a hostile value can neither fail the insert nor break round-trip identity.
+  boundary (truncate at 256 characters, non-string to `null`, `warn` on each
+  anomaly) so a hostile value can neither fail the insert nor break round-trip
+  identity.
 - **Severity:** Low
 - **Evidence:** `packages/webhooks/src/index.ts` line 188: `begin` validates
   `eventId` (`assertSafeEventId`) but passes `type` straight into the receipt.
@@ -158,9 +159,10 @@ file references.
   clock are host-supplied configuration where failing fast surfaces a programmer
   error. `type` is provider-supplied triage data (`docs/PROJECT_PLAN.md`: "the
   event type (for triage)") and never a storage key, so bounding it keeps the
-  ledger able to do its one job. Both normalizations log a `warn` carrying only
-  `source` and `eventId`, so the anomaly is observable without widening the
-  payload boundary. The 256-character cap matches `SAFE_KEY_PART`'s bound;
+  ledger able to do its one job. Truncation and a non-nullish non-string each
+  log a `warn` carrying only `source` and `eventId`, so the anomaly is
+  observable without widening the payload boundary; an absent type is recorded
+  as `null` silently, since a provider omitting a type is not an anomaly. The 256-character cap matches `SAFE_KEY_PART`'s bound;
   real provider event types are well under 60 characters. Documented in both
   READMEs per `AGENTS.md` ("Documentation asserting a limit is load-bearing").
   Covered by "bounds the stored event type instead of failing the receipt",
