@@ -52,9 +52,9 @@ file references.
 
 ### F-01 — Vulnerable transitive dependencies via `azurite` (dev-only)
 
-- **Status:** ✅ Resolved 2026-07-29 — pinned patched `brace-expansion`,
-  `uuid`, and `@opentelemetry/core` through root `overrides`, clearing all 12
-  advisories with Azurite still starting and the suite green.
+- **Status:** ✅ Resolved 2026-07-29 — root `overrides` raise
+  `brace-expansion`, `uuid`, and `@opentelemetry/core` to patched floors,
+  clearing all 12 advisories with Azurite still starting and the suite green.
 - **Severity:** Medium (High advisories, dev-only exposure)
 - **Evidence:** `npm audit` reports 12 vulnerabilities (5 high, 7 moderate).
   All are reachable only through the devDependency `azurite@3.36.0`:
@@ -66,8 +66,8 @@ file references.
     `azurite → sequelize@6.37.8 / @azure/ms-rest-js@2.7.0 → uuid`.
   - `@opentelemetry/core@1.30.1` — **Moderate**, GHSA-8988-4f7v-96qf:
     unbounded memory allocation in W3C Baggage propagation (CWE-770,
-    CVSS 5.3). Chain: `azurite → applicationinsights@2.9.8 →
-@opentelemetry/sdk-trace-base → @opentelemetry/core`.
+    CVSS 5.3). Chain:
+    `azurite → applicationinsights@2.9.8 → @opentelemetry/sdk-trace-base → @opentelemetry/core`.
 - **Exploitability:** Low in practice. `azurite` is a devDependency used only
   to emulate Azure Table Storage during `npm test`; it never ships in the
   published `@pegma/webhooks` package (`files` in
@@ -86,8 +86,11 @@ file references.
 - **Resolution note:** `azurite@3.36.0` is the latest published release and
   still carries every flagged chain, so bumping it was not an option and
   `npm audit fix --force` proposes a _downgrade_ to `azurite@3.33.0`. The three
-  root `overrides` in `package.json` pin the patched transitive versions
-  instead. Because the emulator is load-bearing for the suite (`AGENTS.md`:
+  root `overrides` in `package.json` instead raise each transitive package to
+  the first patched version as a caret floor; `package-lock.json` records the
+  exact resolutions, so `npm ci` stays reproducible while the floors keep
+  documenting _why_ the constraint exists. Because the emulator is
+  load-bearing for the suite (`AGENTS.md`:
   "Test against the real backend"), the overrides were verified empirically —
   Azurite starts and all 45 tests pass over both the memory store and real
   Azure Tables — rather than assumed safe from semver alone.

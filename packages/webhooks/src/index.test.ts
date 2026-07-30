@@ -574,6 +574,31 @@ function ledgerConformance(name: string, freshStore: () => Store): void {
       ]);
     });
 
+    it("persists the receipt even when the normalization warning throws", async () => {
+      const store = freshStore();
+      const ledger = createWebhookLedger({
+        store,
+        source: "stripe",
+        clock: fixedClock(NOW),
+        logger: {
+          log() {
+            throw new Error("logger unavailable");
+          },
+        },
+      });
+
+      // The logger failure still surfaces to the caller, but it can no longer
+      // stop the receipt from existing, so a redelivery dedupes as usual.
+      await expect(
+        ledger.begin("evt_logger_throws", "t".repeat(300)),
+      ).rejects.toThrow(/logger unavailable/);
+      expect(
+        await store
+          .collection(webhookReceiptCollection("stripe"))
+          .get(webhookReceiptKey("stripe", "evt_logger_throws")),
+      ).toEqual(receipt("evt_logger_throws", { type: "t".repeat(256) }));
+    });
+
     it("rejects invalid clock timestamps before a mark can persist", async () => {
       const base = freshStore();
       const tracked = trackLedgerStorage(base);

@@ -217,12 +217,6 @@ export function createWebhookLedger(
       const now = clock.now();
       timestampMilliseconds(now);
       const receiptType = normalizeReceiptType(type);
-      if (receiptType.changed) {
-        logger.log("warn", "Webhook receipt type normalized", {
-          source,
-          eventId,
-        });
-      }
       const { value } = await receipts.insertIfAbsent({
         eventId,
         type: receiptType.value,
@@ -231,6 +225,14 @@ export function createWebhookLedger(
         firstSeenAt: now,
         lastSeenAt: now,
       });
+      // Logged after the receipt is durable, like the other log sites here, so
+      // that a host logger which throws cannot stop the receipt from existing.
+      if (receiptType.changed) {
+        logger.log("warn", "Webhook receipt type normalized", {
+          source,
+          eventId,
+        });
+      }
       return { status: value.status, attempts: value.attempts };
     },
 
