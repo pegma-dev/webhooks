@@ -504,6 +504,76 @@ function ledgerConformance(name: string, freshStore: () => Store): void {
       await expect(ledger.markFailed("")).rejects.toThrow(/event id/);
     });
 
+    it("bounds the stored event type instead of failing the receipt", async () => {
+      const store = freshStore();
+      const entries: Array<{
+        level: string;
+        fields?: Readonly<Record<string, unknown>>;
+      }> = [];
+      const logger: Logger = {
+        log(level, _message, fields) {
+          entries.push({
+            level,
+            ...(fields === undefined ? {} : { fields }),
+          });
+        },
+      };
+      const ledger = createWebhookLedger({
+        store,
+        source: "stripe",
+        clock: fixedClock(NOW),
+        logger,
+      });
+      const receipts = store.collection(webhookReceiptCollection("stripe"));
+      const storedType = async (eventId: string) =>
+        (await receipts.get(webhookReceiptKey("stripe", eventId)))?.type;
+
+      expect(await ledger.begin("evt_long_type", "t".repeat(300))).toEqual({
+        status: "new",
+        attempts: 0,
+      });
+      expect(await storedType("evt_long_type")).toBe("t".repeat(256));
+
+      expect(
+        await ledger.begin("evt_object_type", {
+          toString: () => "surprise",
+        } as unknown as string),
+      ).toEqual({ status: "new", attempts: 0 });
+      expect(await storedType("evt_object_type")).toBeNull();
+
+      expect(
+        await ledger.begin("evt_absent_type", null as unknown as string),
+      ).toEqual({ status: "new", attempts: 0 });
+      expect(await storedType("evt_absent_type")).toBeNull();
+
+      expect(await ledger.begin("evt_exact_type", "t".repeat(256))).toEqual({
+        status: "new",
+        attempts: 0,
+      });
+      expect(await storedType("evt_exact_type")).toBe("t".repeat(256));
+
+      // Truncating mid-surrogate-pair would store an unpaired half.
+      expect(
+        await ledger.begin("evt_surrogate_type", `${"t".repeat(255)}\u{1F600}`),
+      ).toEqual({ status: "new", attempts: 0 });
+      expect(await storedType("evt_surrogate_type")).toBe("t".repeat(255));
+
+      expect(entries).toEqual([
+        {
+          level: "warn",
+          fields: { source: "stripe", eventId: "evt_long_type" },
+        },
+        {
+          level: "warn",
+          fields: { source: "stripe", eventId: "evt_object_type" },
+        },
+        {
+          level: "warn",
+          fields: { source: "stripe", eventId: "evt_surrogate_type" },
+        },
+      ]);
+    });
+
     it("rejects invalid clock timestamps before a mark can persist", async () => {
       const base = freshStore();
       const tracked = trackLedgerStorage(base);

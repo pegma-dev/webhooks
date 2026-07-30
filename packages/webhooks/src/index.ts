@@ -19,6 +19,7 @@ const CANONICAL_ISO_TIMESTAMP =
   /^(?:\d{4}|[+-]\d{6})-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const QUARANTINE_THRESHOLD = 5;
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_TYPE_LENGTH = 256;
 
 export type WebhookReceiptStatus = "new" | "processed" | "quarantined";
 
@@ -71,6 +72,32 @@ function assertSafeEventId(eventId: string): string {
     );
   }
   return eventId;
+}
+
+// The event type is provider-supplied triage data, never a storage key, so it
+// is normalized rather than rejected. Throwing here would fail `begin`, so no
+// receipt would exist, the host would answer 5xx, and the provider would retry
+// forever: the retry storm quarantine exists to stop.
+function normalizeReceiptType(type: unknown): {
+  readonly value: string | null;
+  readonly changed: boolean;
+} {
+  if (typeof type !== "string") {
+    return { value: null, changed: type != null };
+  }
+  if (type.length > MAX_TYPE_LENGTH) {
+    const bounded = type.slice(0, MAX_TYPE_LENGTH);
+    const last = bounded.charCodeAt(MAX_TYPE_LENGTH - 1);
+    // Cutting between a surrogate pair would leave an unpaired half, which is
+    // not encodable as UTF-8 and is rejected by storage: the same failure this
+    // bound exists to prevent. Drop the orphan instead.
+    const orphaned = last >= 0xd800 && last <= 0xdbff;
+    return {
+      value: orphaned ? bounded.slice(0, -1) : bounded,
+      changed: true,
+    };
+  }
+  return { value: type, changed: false };
 }
 
 function canonicalTimestampMilliseconds(timestamp: unknown): number | null {
@@ -189,9 +216,16 @@ export function createWebhookLedger(
       assertSafeEventId(eventId);
       const now = clock.now();
       timestampMilliseconds(now);
+      const receiptType = normalizeReceiptType(type);
+      if (receiptType.changed) {
+        logger.log("warn", "Webhook receipt type normalized", {
+          source,
+          eventId,
+        });
+      }
       const { value } = await receipts.insertIfAbsent({
         eventId,
-        type,
+        type: receiptType.value,
         status: "new",
         attempts: 0,
         firstSeenAt: now,
