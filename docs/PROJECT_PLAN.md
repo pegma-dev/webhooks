@@ -2,8 +2,8 @@
 
 ## Status
 
-**Stage:** Phases 1 through 4 are complete. `@pegma/webhooks@0.1.0` is
-published from the protected signed `v0.1.0` release through npm
+**Stage:** Phases 1 through 4 are complete. `@pegma/webhooks@0.1.1` is
+published from the protected signed `v0.1.1` release through npm
 trusted-publisher OIDC with provenance (`0.x`, public API unstable)
 
 **Initial reference application:** RetireGolden, whose account API supplied the
