@@ -3,7 +3,8 @@
 **Repository:** webhooks (Pegma inbound-webhook receipt ledger)
 **Date:** 2026-07-28
 **Scope:** Repository-wide security review
-**Status:** Complete
+**Status:** Complete — all findings dispositioned 2026-07-29 (3 resolved,
+2 disputed)
 
 ---
 
@@ -12,7 +13,8 @@
 **No Critical or High vulnerabilities found in shipped code.** Five findings:
 one Medium (F-01, vulnerable dev-only transitive dependencies), two Low
 (F-02 CI detection gap, F-03 unvalidated `type` field), two Informational
-(F-04 well-known emulator key, F-05 sweep memory profile).
+(F-04 well-known emulator key, F-05 sweep memory profile). The first three are
+fixed; the two Informational findings are disputed as non-findings.
 
 The ledger's core security posture is strong: the payload data boundary is
 enforced by the codec and tested, storage keys are strictly validated,
@@ -21,13 +23,18 @@ and pinning practices. Dynamic verification: `npm test` passes 43/43
 (including the payload-drop, key-rejection, and concurrent-increment tests)
 against both the memory store and real Azurite.
 
-| ID | Severity | Title |
-|----|----------|-------|
-| F-01 | Medium | Vulnerable transitive dependencies via `azurite` (dev-only) |
-| F-02 | Low | No automated dependency/secret scanning in CI |
-| F-03 | Low | `begin` stores `type` without runtime validation or length bound |
-| F-04 | Informational | Well-known Azure Storage emulator key in test file |
-| F-05 | Informational | Retention sweep buffers entire partition |
+| ID   | Severity      | Title                                                            | Disposition            |
+| ---- | ------------- | ---------------------------------------------------------------- | ---------------------- |
+| F-01 | Medium        | Vulnerable transitive dependencies via `azurite` (dev-only)      | ✅ Resolved 2026-07-29 |
+| F-02 | Low           | No automated dependency/secret scanning in CI                    | ✅ Resolved 2026-07-29 |
+| F-03 | Low           | `begin` stores `type` without runtime validation or length bound | ✅ Resolved 2026-07-29 |
+| F-04 | Informational | Well-known Azure Storage emulator key in test file               | ⚠️ Disputed 2026-07-29 |
+| F-05 | Informational | Retention sweep buffers entire partition                         | ⚠️ Disputed 2026-07-29 |
+
+**Remediation round 2026-07-29:** the three actionable findings are fixed; the
+two Informational findings are disputed as non-findings (see each entry).
+`npm audit` now reports 0 vulnerabilities across the whole tree, and the suite
+passes 45/45 against the memory store and real Azurite.
 
 ---
 
@@ -45,6 +52,9 @@ file references.
 
 ### F-01 — Vulnerable transitive dependencies via `azurite` (dev-only)
 
+- **Status:** ✅ Resolved 2026-07-29 — root `overrides` raise
+  `brace-expansion`, `uuid`, and `@opentelemetry/core` to patched floors,
+  clearing all 12 advisories with Azurite still starting and the suite green.
 - **Severity:** Medium (High advisories, dev-only exposure)
 - **Evidence:** `npm audit` reports 12 vulnerabilities (5 high, 7 moderate).
   All are reachable only through the devDependency `azurite@3.36.0`:
@@ -56,12 +66,12 @@ file references.
     `azurite → sequelize@6.37.8 / @azure/ms-rest-js@2.7.0 → uuid`.
   - `@opentelemetry/core@1.30.1` — **Moderate**, GHSA-8988-4f7v-96qf:
     unbounded memory allocation in W3C Baggage propagation (CWE-770,
-    CVSS 5.3). Chain: `azurite → applicationinsights@2.9.8 →
-    @opentelemetry/sdk-trace-base → @opentelemetry/core`.
+    CVSS 5.3). Chain:
+    `azurite → applicationinsights@2.9.8 → @opentelemetry/sdk-trace-base → @opentelemetry/core`.
 - **Exploitability:** Low in practice. `azurite` is a devDependency used only
   to emulate Azure Table Storage during `npm test`; it never ships in the
   published `@pegma/webhooks` package (`files` in
-  `packages/webhooks/package.json` includes only `dist` and `src`), and it is
+  `packages/webhooks/package.json` lists only built `dist` artifacts), and it is
   not installed by consumers. Exploitation requires running the test suite
   against attacker-influenced input (e.g., a malicious glob pattern or crafted
   baggage header reaching the emulator), which is not part of the test
@@ -73,9 +83,23 @@ file references.
   release clears the `rimraf`/`sequelize`/`applicationinsights` chains.
   Consider `npm audit --omit=dev` gating for production-dependency
   regressions in CI (see F-02).
+- **Resolution note:** `azurite@3.36.0` is the latest published release and
+  still carries every flagged chain, so bumping it was not an option and
+  `npm audit fix --force` proposes a _downgrade_ to `azurite@3.33.0`. The three
+  root `overrides` in `package.json` instead raise each transitive package to
+  the first patched version as a caret floor; `package-lock.json` records the
+  exact resolutions, so `npm ci` stays reproducible while the floors keep
+  documenting _why_ the constraint exists. Because the emulator is
+  load-bearing for the suite (`AGENTS.md`:
+  "Test against the real backend"), the overrides were verified empirically —
+  Azurite starts and all 45 tests pass over both the memory store and real
+  Azure Tables — rather than assumed safe from semver alone.
 
 ### F-02 — No automated dependency/secret scanning in CI
 
+- **Status:** ✅ Resolved 2026-07-29 — added `.github/dependabot.yml` (npm +
+  github-actions, weekly) and an `npm audit --omit=dev --audit-level=low` gate
+  to `ci.yml`.
 - **Severity:** Low
 - **Evidence:** `.github/workflows/ci.yml` runs format, typecheck, and tests
   only. There is no `npm audit` step, no Dependabot/Renovate configuration
@@ -87,9 +111,20 @@ file references.
   Actions ecosystems, and consider an `npm audit --omit=dev` CI step so
   production-dependency advisories fail the build while dev-only noise
   (F-01) does not block development.
+- **Resolution note:** the gate is deliberately scoped with `--omit=dev`. A
+  whole-tree gate would turn every future dev-only advisory into a red build on
+  unrelated pull requests; the production tree is what reaches consumers of
+  `@pegma/webhooks`. Dependabot covers the dev tree on its own cadence. GitHub
+  secret scanning is a repository setting rather than a committed file, so it is
+  not part of this diff (see F-04: the only secret-shaped string in the tree is
+  a public emulator constant).
 
 ### F-03 — `begin(eventId, type)` stores `type` without runtime validation or a length bound
 
+- **Status:** ✅ Resolved 2026-07-29 — `begin` now normalizes `type` at the
+  boundary (truncate at 256 characters, non-string to `null`, `warn` on each
+  anomaly) so a hostile value can neither fail the insert nor break round-trip
+  identity.
 - **Severity:** Low
 - **Evidence:** `packages/webhooks/src/index.ts` line 188: `begin` validates
   `eventId` (`assertSafeEventId`) but passes `type` straight into the receipt.
@@ -108,17 +143,44 @@ file references.
   2. A non-string `type` (from a JS caller bypassing TypeScript) is stored
      as-is and coerced by `String(...)` on decode, so a round trip is not
      identity (`{...}` in, `"[object Object]"` out).
-  The value is never used as a storage key and never logged, so there is no
-  key-injection or log-injection path.
+     The value is never used as a storage key and never logged, so there is no
+     key-injection or log-injection path.
 - **File references:** `packages/webhooks/src/index.ts` lines 45
   (`begin(eventId: string, type: string)`), 188-201, 114-123.
 - **Recommendation:** Reject non-string and over-length `type` values at the
   `begin` boundary (e.g., a few-hundred-character cap — provider event types
   are short classification strings), mirroring the existing key/timestamp
   guards.
+- **Resolution note — the fix bounds rather than rejects.** The recommendation
+  above was not followed literally, because rejecting does not fix the harm this
+  finding identifies. A `TypeError` from `begin` produces exactly the outcome
+  described in impact 1: the host answers 5xx and the provider retries. It is
+  strictly worse than the storage throw it replaces, because _no receipt is ever
+  written_, so `attempts` never increments and the quarantine that exists to
+  stop poison events can never engage — the event retries forever. The existing
+  key and timestamp guards reject correctly because `source`, `eventId`, and the
+  clock are host-supplied configuration where failing fast surfaces a programmer
+  error. `type` is provider-supplied triage data (`docs/PROJECT_PLAN.md`: "the
+  event type (for triage)") and never a storage key, so bounding it keeps the
+  ledger able to do its one job. Truncation and a non-nullish non-string each
+  log a `warn` carrying only `source` and `eventId`, so the anomaly is
+  observable without widening the payload boundary; an absent type is recorded
+  as `null` silently, since a provider omitting a type is not an anomaly. The 256-character cap matches `SAFE_KEY_PART`'s bound;
+  real provider event types are well under 60 characters. Documented in both
+  READMEs per `AGENTS.md` ("Documentation asserting a limit is load-bearing").
+  Covered by "bounds the stored event type instead of failing the receipt",
+  which runs against the memory store and real Azurite.
 
 ### F-04 — Well-known Azure Storage emulator key committed in test file
 
+- **Status:** ⚠️ Disputed 2026-07-29 — not a valid finding: the string is
+  Microsoft's published `devstoreaccount1` constant, identical in every Azurite
+  installation and documented in public Azure docs. It is a fixture value, not a
+  credential — it authenticates to nothing but a loopback-bound emulator this
+  repo starts itself on an ephemeral port. There is no secret to rotate and no
+  attacker-reachable resource, so no code change was made. The finding's own
+  evidence concedes "Exploitability: None"; the only cost is scanner triage
+  noise, which is a tooling preference rather than a security defect.
 - **Severity:** Informational
 - **Evidence:** `packages/webhooks/src/index.test.ts` lines 31-33 contain
   `AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==`.
@@ -128,8 +190,8 @@ file references.
 - **Exploitability:** None — it is not a credential to any real resource.
   The only cost is noise: automated secret scanners will flag it, and an
   inattentive reader could mistake it for a leaked key. Note the file is
-  excluded from the published npm package (`"!src/**/*.test.ts"` in
-  `packages/webhooks/package.json`).
+  excluded from the published npm package, whose `files` field lists only built
+  `dist` artifacts.
 - **File references:** `packages/webhooks/src/index.test.ts` lines 31-39.
 - **Recommendation:** No action required for security. Optionally add a
   comment citing the Microsoft docs URL for the well-known key, and/or a
@@ -137,6 +199,19 @@ file references.
 
 ### F-05 — Retention sweep loads the entire partition into memory
 
+- **Status:** ⚠️ Disputed 2026-07-29 — not a valid finding: this is a capacity
+  characteristic, not a vulnerability. `purgeExpired` is host-scheduled and takes
+  no attacker input; partition size is bounded by 30-day retention times a
+  source's legitimate event volume, and each row is six small scalar fields
+  (no payloads, per the data boundary), so a very busy source measures in
+  megabytes. There is no amplification an attacker controls — flooding the
+  partition requires already-authenticated webhook deliveries the host chose to
+  accept. Paginating would mean adding continuation-token support to the
+  `@pegma/storage-core` contract, a cross-repo design change that
+  `AGENTS.md` routes through `docs/PROJECT_PLAN.md`; doing it here under a
+  security banner would be unjustified scope. The finding's own evidence
+  concedes "Not attacker-reachable" and its recommendation is "Acceptable as-is
+  for the stated scale."
 - **Severity:** Informational
 - **Evidence:** `purgeExpired` (lines 254-283) calls
   `receipts.listVersioned(source)` and iterates the full result set. A
@@ -218,3 +293,9 @@ These were specifically probed and found sound:
 (43/43 passing, memory store + real Azurite), `npm audit` (see F-01).
 
 **Scan completed:** 2026-07-28.
+
+**Remediation completed:** 2026-07-29. Each finding was re-derived from the code
+before acting. F-01, F-02, and F-03 were fixed; F-04 and F-05 were disputed as
+non-findings with reasoning recorded on each entry. Post-fix verification:
+`npm run format:check`, `npm run check`, `npm test` (45/45 over the memory store
+and real Azurite), `npm audit` (0 vulnerabilities), `npm run release:check`.

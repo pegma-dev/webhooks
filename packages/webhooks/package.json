@@ -1,6 +1,6 @@
 {
   "name": "@pegma/webhooks",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Inbound webhook receipt handling with explicit at-least-once semantics.",
   "license": "MIT",
   "type": "module",
