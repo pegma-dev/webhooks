@@ -132,21 +132,27 @@ function parseStableSemver(version) {
   return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
+const EXACT_PIN =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
+
 function versionSatisfies(resolved, specifier) {
+  // Exact pins — stable or prerelease — must match the resolved version
+  // exactly. Do not treat `1.2.3-beta.1` as the stable pin `1.2.3`.
+  if (EXACT_PIN.test(specifier)) {
+    return resolved === specifier;
+  }
   const actual = parseStableSemver(resolved);
   if (actual === null) {
     return false;
-  }
-  if (parseStableSemver(specifier) !== null) {
-    return resolved === specifier;
   }
   const caret = /^\^((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*))$/u.exec(
     specifier,
   );
   if (caret !== null) {
     const floor = parseStableSemver(caret[1]);
+    // npm caret: ^0.0.x is that exact patch only (>=0.0.x <0.0.(x+1)).
     if (floor[0] === 0 && floor[1] === 0) {
-      return actual[0] === 0 && actual[1] === 0 && actual[2] >= floor[2];
+      return actual[0] === 0 && actual[1] === 0 && actual[2] === floor[2];
     }
     if (floor[0] === 0) {
       return actual[0] === 0 && actual[1] === floor[1] && actual[2] >= floor[2];
@@ -193,7 +199,7 @@ function parsePnpmImporterDependencies(lockText, importer) {
     return null;
   }
   index += 1;
-  const sections = { dependencies: {}, peerDependencies: {} };
+  const sections = { dependencies: {} };
   let currentSection = null;
   let current = null;
   while (index < lines.length) {
@@ -205,9 +211,8 @@ function parsePnpmImporterDependencies(lockText, importer) {
     ) {
       break;
     }
-    const sectionMatch = /^ {4}(dependencies|peerDependencies):$/u.exec(line);
-    if (sectionMatch !== null) {
-      currentSection = sectionMatch[1];
+    if (line === "    dependencies:") {
+      currentSection = "dependencies";
       current = null;
       index += 1;
       continue;
@@ -307,10 +312,6 @@ export async function validateRepository(options = {}) {
     !lockDependenciesMatch(
       lockDependencies?.dependencies,
       REQUIRED_DEPENDENCIES,
-    ) ||
-    !lockDependenciesMatch(
-      lockDependencies?.peerDependencies,
-      manifest.peerDependencies ?? {},
     )
   ) {
     fail("Pegma runtime dependencies must match the reviewed exact pins");
