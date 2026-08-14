@@ -18,7 +18,7 @@ const PACKAGE_DIRECTORY = "packages/webhooks";
 const PACKAGE_MANAGER = "pnpm@10.34.5";
 const REPOSITORY_URL = "git+https://github.com/pegma-dev/webhooks.git";
 const NODE_RANGE = ">=22";
-const STABLE_VERSION = /^\d+\.\d+\.\d+$/u;
+const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 const WORKSPACE_PACKAGES = ["packages/*"];
 const REQUIRED_DEPENDENCIES = {
   "@pegma/spine": "0.1.1",
@@ -107,6 +107,68 @@ function parsePnpmWorkspacePackages(text) {
   return packages;
 }
 
+function decodeYamlScalar(value) {
+  if (typeof value !== "string") {
+    return value;
+  }
+  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1).replaceAll("''", "'");
+  }
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1).replaceAll('\\"', '"').replaceAll("\\\\", "\\");
+  }
+  return value;
+}
+
+function lockResolvedVersion(version) {
+  return /^(\S+?)(?:\(|$)/u.exec(version)?.[1] ?? version;
+}
+
+function parseStableSemver(version) {
+  const match = STABLE_VERSION.exec(version);
+  if (match === null) {
+    return null;
+  }
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function versionSatisfies(resolved, specifier) {
+  const actual = parseStableSemver(resolved);
+  if (actual === null) {
+    return false;
+  }
+  if (parseStableSemver(specifier) !== null) {
+    return resolved === specifier;
+  }
+  const caret = /^\^((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*))$/u.exec(
+    specifier,
+  );
+  if (caret !== null) {
+    const floor = parseStableSemver(caret[1]);
+    if (floor[0] === 0 && floor[1] === 0) {
+      return actual[0] === 0 && actual[1] === 0 && actual[2] >= floor[2];
+    }
+    if (floor[0] === 0) {
+      return actual[0] === 0 && actual[1] === floor[1] && actual[2] >= floor[2];
+    }
+    return (
+      actual[0] === floor[0] &&
+      (actual[1] > floor[1] ||
+        (actual[1] === floor[1] && actual[2] >= floor[2]))
+    );
+  }
+  const tilde = /^~((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*))$/u.exec(
+    specifier,
+  );
+  if (tilde !== null) {
+    const floor = parseStableSemver(tilde[1]);
+    return (
+      actual[0] === floor[0] && actual[1] === floor[1] && actual[2] >= floor[2]
+    );
+  }
+  return true;
+}
+
 function parsePnpmImporterDependencies(lockText, importer) {
   const lines = lockText.split(/\r?\n/u);
   let index = 0;
@@ -131,8 +193,8 @@ function parsePnpmImporterDependencies(lockText, importer) {
     return null;
   }
   index += 1;
-  const dependencies = {};
-  let inDependencies = false;
+  const sections = { dependencies: {}, peerDependencies: {} };
+  let currentSection = null;
   let current = null;
   while (index < lines.length) {
     const line = lines[index];
@@ -143,36 +205,38 @@ function parsePnpmImporterDependencies(lockText, importer) {
     ) {
       break;
     }
-    if (line === "    dependencies:") {
-      inDependencies = true;
+    const sectionMatch =
+      /^ {4}(dependencies|peerDependencies):$/u.exec(line);
+    if (sectionMatch !== null) {
+      currentSection = sectionMatch[1];
       current = null;
       index += 1;
       continue;
     }
-    if (inDependencies && /^ {4}\S/u.test(line)) {
-      inDependencies = false;
+    if (currentSection !== null && /^ {4}\S/u.test(line)) {
+      currentSection = null;
       current = null;
     }
-    if (inDependencies) {
-      const nameMatch = /^ {6}('([^']+)'|([^:]+)):$/u.exec(line);
+    if (currentSection !== null) {
+      const nameMatch = /^ {6}(.+):$/u.exec(line);
       if (nameMatch !== null) {
-        current = nameMatch[2] ?? nameMatch[3];
-        dependencies[current] = { specifier: null, version: null };
+        current = decodeYamlScalar(nameMatch[1]);
+        sections[currentSection][current] = {
+          specifier: null,
+          version: null,
+        };
       } else if (current !== null) {
-        const specifier = /^ {8}specifier: (.+)$/u.exec(line);
-        if (specifier !== null) {
-          dependencies[current].specifier = specifier[1];
-        } else {
-          const version = /^ {8}version: (.+)$/u.exec(line);
-          if (version !== null) {
-            dependencies[current].version = version[1];
-          }
+        const field = /^ {8}(specifier|version): (.+)$/u.exec(line);
+        if (field !== null) {
+          sections[currentSection][current][field[1]] = decodeYamlScalar(
+            field[2],
+          );
         }
       }
     }
     index += 1;
   }
-  return dependencies;
+  return sections;
 }
 
 function lockDependenciesMatch(lockDependencies, required) {
@@ -186,7 +250,11 @@ function lockDependenciesMatch(lockDependencies, required) {
   return requiredNames.every((name) => {
     const entry = lockDependencies[name];
     const pin = required[name];
-    return entry.specifier === pin && entry.version === pin;
+    return (
+      entry.specifier === pin &&
+      typeof entry.version === "string" &&
+      versionSatisfies(lockResolvedVersion(entry.version), pin)
+    );
   });
 }
 
@@ -237,7 +305,14 @@ export async function validateRepository(options = {}) {
   }
   if (
     !sameJson(manifest.dependencies, REQUIRED_DEPENDENCIES) ||
-    !lockDependenciesMatch(lockDependencies, REQUIRED_DEPENDENCIES)
+    !lockDependenciesMatch(
+      lockDependencies?.dependencies,
+      REQUIRED_DEPENDENCIES,
+    ) ||
+    !lockDependenciesMatch(
+      lockDependencies?.peerDependencies,
+      manifest.peerDependencies ?? {},
+    )
   ) {
     fail("Pegma runtime dependencies must match the reviewed exact pins");
   }

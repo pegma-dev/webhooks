@@ -49,6 +49,7 @@ The reviewed release-preparation pull request changes the public workspace and
 lockfile to `0.1.0`, documents the release, and passes:
 
 ```sh
+npm install -g corepack
 corepack enable
 pnpm install --frozen-lockfile
 pnpm run format:check
