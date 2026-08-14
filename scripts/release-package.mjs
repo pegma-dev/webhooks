@@ -15,10 +15,11 @@ import { fileURLToPath } from "node:url";
 
 const PACKAGE_NAME = "@pegma/webhooks";
 const PACKAGE_DIRECTORY = "packages/webhooks";
-const PACKAGE_MANAGER = "npm@11.18.0";
+const PACKAGE_MANAGER = "pnpm@10.34.5";
 const REPOSITORY_URL = "git+https://github.com/pegma-dev/webhooks.git";
 const NODE_RANGE = ">=22";
 const STABLE_VERSION = /^\d+\.\d+\.\d+$/u;
+const WORKSPACE_PACKAGES = ["packages/*"];
 const REQUIRED_DEPENDENCIES = {
   "@pegma/spine": "0.1.1",
   "@pegma/storage-core": "0.4.0",
@@ -47,6 +48,8 @@ function run(command, arguments_, options = {}) {
   return result;
 }
 
+// Registry operations stay on the npm CLI: trusted-publisher OIDC is
+// configured for `npm publish`, and pack metadata/hashes must stay identical.
 function runNpm(arguments_, options = {}) {
   const npmExecPath = process.env.npm_execpath;
   if (npmExecPath !== undefined) {
@@ -88,14 +91,102 @@ function exportTargets(exports) {
   );
 }
 
+function parsePnpmWorkspacePackages(text) {
+  const lines = text.split(/\r?\n/u);
+  if (lines[0] !== "packages:") {
+    return null;
+  }
+  const packages = [];
+  for (const line of lines.slice(1)) {
+    if (line.trim() === "") {
+      continue;
+    }
+    const match = /^ {2}- ["']?([^"']+)["']?$/u.exec(line);
+    if (match === null) {
+      return null;
+    }
+    packages.push(match[1]);
+  }
+  return packages;
+}
+
+function parsePnpmImporterDependencySpecifiers(lockText, importer) {
+  const lines = lockText.split(/\r?\n/u);
+  let index = 0;
+  while (index < lines.length && lines[index] !== "importers:") {
+    index += 1;
+  }
+  if (index === lines.length) {
+    return null;
+  }
+  index += 1;
+  const header = `  ${importer}:`;
+  while (index < lines.length && lines[index] !== header) {
+    if (
+      lines[index] === "packages:" ||
+      (/^\S/u.test(lines[index]) && lines[index] !== "")
+    ) {
+      return null;
+    }
+    index += 1;
+  }
+  if (index === lines.length) {
+    return null;
+  }
+  index += 1;
+  const dependencies = {};
+  let inDependencies = false;
+  let current = null;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (
+      line === "packages:" ||
+      /^ {2}\S/u.test(line) ||
+      (/^\S/u.test(line) && line !== "")
+    ) {
+      break;
+    }
+    if (line === "    dependencies:") {
+      inDependencies = true;
+      current = null;
+      index += 1;
+      continue;
+    }
+    if (inDependencies && /^ {4}\S/u.test(line)) {
+      inDependencies = false;
+      current = null;
+    }
+    if (inDependencies) {
+      const nameMatch = /^ {6}('([^']+)'|([^:]+)):$/u.exec(line);
+      if (nameMatch !== null) {
+        current = nameMatch[2] ?? nameMatch[3];
+      } else if (current !== null) {
+        const specifier = /^ {8}specifier: (.+)$/u.exec(line);
+        if (specifier !== null) {
+          dependencies[current] = specifier[1];
+          current = null;
+        }
+      }
+    }
+    index += 1;
+  }
+  return dependencies;
+}
+
 export async function validateRepository(options = {}) {
   const root = resolve(options.root ?? defaultRoot());
   const rootManifest = await readJson(join(root, "package.json"));
   const manifest = await readJson(
     join(root, PACKAGE_DIRECTORY, "package.json"),
   );
-  const lock = await readJson(join(root, "package-lock.json"));
-  const lockEntry = lock.packages?.[PACKAGE_DIRECTORY];
+  const workspace = parsePnpmWorkspacePackages(
+    await readFile(join(root, "pnpm-workspace.yaml"), "utf8"),
+  );
+  const lockText = await readFile(join(root, "pnpm-lock.yaml"), "utf8");
+  const lockDependencies = parsePnpmImporterDependencySpecifiers(
+    lockText,
+    PACKAGE_DIRECTORY,
+  );
   const packageDirectories = (
     await readdir(join(root, "packages"), { withFileTypes: true })
   )
@@ -106,7 +197,7 @@ export async function validateRepository(options = {}) {
     rootManifest.name !== "webhooks" ||
     rootManifest.private !== true ||
     rootManifest.packageManager !== PACKAGE_MANAGER ||
-    !sameJson(rootManifest.workspaces, ["packages/*"])
+    !sameJson(workspace, WORKSPACE_PACKAGES)
   ) {
     fail("the private root workspace metadata is invalid");
   }
@@ -129,13 +220,12 @@ export async function validateRepository(options = {}) {
   }
   if (
     !sameJson(manifest.dependencies, REQUIRED_DEPENDENCIES) ||
-    !sameJson(lockEntry?.dependencies, REQUIRED_DEPENDENCIES)
+    !sameJson(lockDependencies, REQUIRED_DEPENDENCIES)
   ) {
     fail("Pegma runtime dependencies must match the reviewed exact pins");
   }
   if (
-    lockEntry?.name !== PACKAGE_NAME ||
-    lockEntry.version !== manifest.version ||
+    !lockText.startsWith("lockfileVersion: '9.0'\n") ||
     typeof manifest.scripts?.prepack !== "string" ||
     !manifest.scripts.prepack.includes("build")
   ) {
