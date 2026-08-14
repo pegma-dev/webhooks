@@ -34,7 +34,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@pegma/spine": "0.1.1",
+    "@pegma/spine": "0.1.2",
     "@pegma/storage-core": "0.4.0"
   }
 }
