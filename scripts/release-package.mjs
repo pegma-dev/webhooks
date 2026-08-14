@@ -205,8 +205,7 @@ function parsePnpmImporterDependencies(lockText, importer) {
     ) {
       break;
     }
-    const sectionMatch =
-      /^ {4}(dependencies|peerDependencies):$/u.exec(line);
+    const sectionMatch = /^ {4}(dependencies|peerDependencies):$/u.exec(line);
     if (sectionMatch !== null) {
       currentSection = sectionMatch[1];
       current = null;
