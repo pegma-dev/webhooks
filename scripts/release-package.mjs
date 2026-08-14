@@ -48,13 +48,10 @@ function run(command, arguments_, options = {}) {
   return result;
 }
 
-// Registry operations stay on the npm CLI: trusted-publisher OIDC is
-// configured for `npm publish`, and pack metadata/hashes must stay identical.
+// Registry operations must invoke a real npm CLI. `pnpm run` sets
+// `npm_execpath` to pnpm, which would turn `pack`, `view`, `--version`, and
+// `publish --provenance` into pnpm. Keep pnpm for workspace orchestration only.
 function runNpm(arguments_, options = {}) {
-  const npmExecPath = process.env.npm_execpath;
-  if (npmExecPath !== undefined) {
-    return run(process.execPath, [npmExecPath, ...arguments_], options);
-  }
   return run(process.platform === "win32" ? "npm.cmd" : "npm", arguments_, {
     ...options,
     shell: process.platform === "win32",
@@ -110,7 +107,7 @@ function parsePnpmWorkspacePackages(text) {
   return packages;
 }
 
-function parsePnpmImporterDependencySpecifiers(lockText, importer) {
+function parsePnpmImporterDependencies(lockText, importer) {
   const lines = lockText.split(/\r?\n/u);
   let index = 0;
   while (index < lines.length && lines[index] !== "importers:") {
@@ -160,17 +157,37 @@ function parsePnpmImporterDependencySpecifiers(lockText, importer) {
       const nameMatch = /^ {6}('([^']+)'|([^:]+)):$/u.exec(line);
       if (nameMatch !== null) {
         current = nameMatch[2] ?? nameMatch[3];
+        dependencies[current] = { specifier: null, version: null };
       } else if (current !== null) {
         const specifier = /^ {8}specifier: (.+)$/u.exec(line);
         if (specifier !== null) {
-          dependencies[current] = specifier[1];
-          current = null;
+          dependencies[current].specifier = specifier[1];
+        } else {
+          const version = /^ {8}version: (.+)$/u.exec(line);
+          if (version !== null) {
+            dependencies[current].version = version[1];
+          }
         }
       }
     }
     index += 1;
   }
   return dependencies;
+}
+
+function lockDependenciesMatch(lockDependencies, required) {
+  if (lockDependencies === null) {
+    return false;
+  }
+  const requiredNames = Object.keys(required).sort();
+  if (!sameJson(Object.keys(lockDependencies).sort(), requiredNames)) {
+    return false;
+  }
+  return requiredNames.every((name) => {
+    const entry = lockDependencies[name];
+    const pin = required[name];
+    return entry.specifier === pin && entry.version === pin;
+  });
 }
 
 export async function validateRepository(options = {}) {
@@ -183,7 +200,7 @@ export async function validateRepository(options = {}) {
     await readFile(join(root, "pnpm-workspace.yaml"), "utf8"),
   );
   const lockText = await readFile(join(root, "pnpm-lock.yaml"), "utf8");
-  const lockDependencies = parsePnpmImporterDependencySpecifiers(
+  const lockDependencies = parsePnpmImporterDependencies(
     lockText,
     PACKAGE_DIRECTORY,
   );
@@ -220,7 +237,7 @@ export async function validateRepository(options = {}) {
   }
   if (
     !sameJson(manifest.dependencies, REQUIRED_DEPENDENCIES) ||
-    !sameJson(lockDependencies, REQUIRED_DEPENDENCIES)
+    !lockDependenciesMatch(lockDependencies, REQUIRED_DEPENDENCIES)
   ) {
     fail("Pegma runtime dependencies must match the reviewed exact pins");
   }
