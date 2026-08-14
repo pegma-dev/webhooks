@@ -100,6 +100,20 @@ Tables adapter against real Azurite.
 See [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md) for the design decisions and
 delivery phases.
 
+## Development
+
+Requires Node.js 22 or 24 (the versions CI runs). Node 25+ does not bundle
+Corepack, so install it before enabling the pnpm shim:
+
+```sh
+npm install -g corepack
+corepack enable
+pnpm install --frozen-lockfile
+pnpm run format:check
+pnpm run check
+pnpm test
+```
+
 ## License
 
 MIT © RetireGolden, LLC

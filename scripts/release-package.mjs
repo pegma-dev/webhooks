@@ -15,10 +15,11 @@ import { fileURLToPath } from "node:url";
 
 const PACKAGE_NAME = "@pegma/webhooks";
 const PACKAGE_DIRECTORY = "packages/webhooks";
-const PACKAGE_MANAGER = "npm@11.18.0";
+const PACKAGE_MANAGER = "pnpm@10.34.5";
 const REPOSITORY_URL = "git+https://github.com/pegma-dev/webhooks.git";
 const NODE_RANGE = ">=22";
-const STABLE_VERSION = /^\d+\.\d+\.\d+$/u;
+const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
+const WORKSPACE_PACKAGES = ["packages/*"];
 const REQUIRED_DEPENDENCIES = {
   "@pegma/spine": "0.1.1",
   "@pegma/storage-core": "0.4.0",
@@ -47,11 +48,10 @@ function run(command, arguments_, options = {}) {
   return result;
 }
 
+// Registry operations must invoke a real npm CLI. `pnpm run` sets
+// `npm_execpath` to pnpm, which would turn `pack`, `view`, `--version`, and
+// `publish --provenance` into pnpm. Keep pnpm for workspace orchestration only.
 function runNpm(arguments_, options = {}) {
-  const npmExecPath = process.env.npm_execpath;
-  if (npmExecPath !== undefined) {
-    return run(process.execPath, [npmExecPath, ...arguments_], options);
-  }
   return run(process.platform === "win32" ? "npm.cmd" : "npm", arguments_, {
     ...options,
     shell: process.platform === "win32",
@@ -88,14 +88,194 @@ function exportTargets(exports) {
   );
 }
 
+function parsePnpmWorkspacePackages(text) {
+  const lines = text.split(/\r?\n/u);
+  if (lines[0] !== "packages:") {
+    return null;
+  }
+  const packages = [];
+  for (const line of lines.slice(1)) {
+    if (line.trim() === "") {
+      continue;
+    }
+    const match = /^ {2}- ["']?([^"']+)["']?$/u.exec(line);
+    if (match === null) {
+      return null;
+    }
+    packages.push(match[1]);
+  }
+  return packages;
+}
+
+function decodeYamlScalar(value) {
+  if (typeof value !== "string") {
+    return value;
+  }
+  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1).replaceAll("''", "'");
+  }
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1).replaceAll('\\"', '"').replaceAll("\\\\", "\\");
+  }
+  return value;
+}
+
+function lockResolvedVersion(version) {
+  return /^(\S+?)(?:\(|$)/u.exec(version)?.[1] ?? version;
+}
+
+function parseStableSemver(version) {
+  const match = STABLE_VERSION.exec(version);
+  if (match === null) {
+    return null;
+  }
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+const EXACT_PIN =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
+
+function versionSatisfies(resolved, specifier) {
+  // Exact pins — stable or prerelease — must match the resolved version
+  // exactly. Do not treat `1.2.3-beta.1` as the stable pin `1.2.3`.
+  if (EXACT_PIN.test(specifier)) {
+    return resolved === specifier;
+  }
+  const actual = parseStableSemver(resolved);
+  if (actual === null) {
+    return false;
+  }
+  const caret = /^\^((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*))$/u.exec(
+    specifier,
+  );
+  if (caret !== null) {
+    const floor = parseStableSemver(caret[1]);
+    // npm caret: ^0.0.x is that exact patch only (>=0.0.x <0.0.(x+1)).
+    if (floor[0] === 0 && floor[1] === 0) {
+      return actual[0] === 0 && actual[1] === 0 && actual[2] === floor[2];
+    }
+    if (floor[0] === 0) {
+      return actual[0] === 0 && actual[1] === floor[1] && actual[2] >= floor[2];
+    }
+    return (
+      actual[0] === floor[0] &&
+      (actual[1] > floor[1] ||
+        (actual[1] === floor[1] && actual[2] >= floor[2]))
+    );
+  }
+  const tilde = /^~((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*))$/u.exec(
+    specifier,
+  );
+  if (tilde !== null) {
+    const floor = parseStableSemver(tilde[1]);
+    return (
+      actual[0] === floor[0] && actual[1] === floor[1] && actual[2] >= floor[2]
+    );
+  }
+  return true;
+}
+
+function parsePnpmImporterDependencies(lockText, importer) {
+  const lines = lockText.split(/\r?\n/u);
+  let index = 0;
+  while (index < lines.length && lines[index] !== "importers:") {
+    index += 1;
+  }
+  if (index === lines.length) {
+    return null;
+  }
+  index += 1;
+  const header = `  ${importer}:`;
+  while (index < lines.length && lines[index] !== header) {
+    if (
+      lines[index] === "packages:" ||
+      (/^\S/u.test(lines[index]) && lines[index] !== "")
+    ) {
+      return null;
+    }
+    index += 1;
+  }
+  if (index === lines.length) {
+    return null;
+  }
+  index += 1;
+  const sections = { dependencies: {} };
+  let currentSection = null;
+  let current = null;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (
+      line === "packages:" ||
+      /^ {2}\S/u.test(line) ||
+      (/^\S/u.test(line) && line !== "")
+    ) {
+      break;
+    }
+    if (line === "    dependencies:") {
+      currentSection = "dependencies";
+      current = null;
+      index += 1;
+      continue;
+    }
+    if (currentSection !== null && /^ {4}\S/u.test(line)) {
+      currentSection = null;
+      current = null;
+    }
+    if (currentSection !== null) {
+      const nameMatch = /^ {6}(.+):$/u.exec(line);
+      if (nameMatch !== null) {
+        current = decodeYamlScalar(nameMatch[1]);
+        sections[currentSection][current] = {
+          specifier: null,
+          version: null,
+        };
+      } else if (current !== null) {
+        const field = /^ {8}(specifier|version): (.+)$/u.exec(line);
+        if (field !== null) {
+          sections[currentSection][current][field[1]] = decodeYamlScalar(
+            field[2],
+          );
+        }
+      }
+    }
+    index += 1;
+  }
+  return sections;
+}
+
+function lockDependenciesMatch(lockDependencies, required) {
+  if (lockDependencies === null) {
+    return false;
+  }
+  const requiredNames = Object.keys(required).sort();
+  if (!sameJson(Object.keys(lockDependencies).sort(), requiredNames)) {
+    return false;
+  }
+  return requiredNames.every((name) => {
+    const entry = lockDependencies[name];
+    const pin = required[name];
+    return (
+      entry.specifier === pin &&
+      typeof entry.version === "string" &&
+      versionSatisfies(lockResolvedVersion(entry.version), pin)
+    );
+  });
+}
+
 export async function validateRepository(options = {}) {
   const root = resolve(options.root ?? defaultRoot());
   const rootManifest = await readJson(join(root, "package.json"));
   const manifest = await readJson(
     join(root, PACKAGE_DIRECTORY, "package.json"),
   );
-  const lock = await readJson(join(root, "package-lock.json"));
-  const lockEntry = lock.packages?.[PACKAGE_DIRECTORY];
+  const workspace = parsePnpmWorkspacePackages(
+    await readFile(join(root, "pnpm-workspace.yaml"), "utf8"),
+  );
+  const lockText = await readFile(join(root, "pnpm-lock.yaml"), "utf8");
+  const lockDependencies = parsePnpmImporterDependencies(
+    lockText,
+    PACKAGE_DIRECTORY,
+  );
   const packageDirectories = (
     await readdir(join(root, "packages"), { withFileTypes: true })
   )
@@ -106,7 +286,7 @@ export async function validateRepository(options = {}) {
     rootManifest.name !== "webhooks" ||
     rootManifest.private !== true ||
     rootManifest.packageManager !== PACKAGE_MANAGER ||
-    !sameJson(rootManifest.workspaces, ["packages/*"])
+    !sameJson(workspace, WORKSPACE_PACKAGES)
   ) {
     fail("the private root workspace metadata is invalid");
   }
@@ -129,13 +309,15 @@ export async function validateRepository(options = {}) {
   }
   if (
     !sameJson(manifest.dependencies, REQUIRED_DEPENDENCIES) ||
-    !sameJson(lockEntry?.dependencies, REQUIRED_DEPENDENCIES)
+    !lockDependenciesMatch(
+      lockDependencies?.dependencies,
+      REQUIRED_DEPENDENCIES,
+    )
   ) {
     fail("Pegma runtime dependencies must match the reviewed exact pins");
   }
   if (
-    lockEntry?.name !== PACKAGE_NAME ||
-    lockEntry.version !== manifest.version ||
+    !lockText.startsWith("lockfileVersion: '9.0'\n") ||
     typeof manifest.scripts?.prepack !== "string" ||
     !manifest.scripts.prepack.includes("build")
   ) {

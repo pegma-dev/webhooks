@@ -49,13 +49,14 @@ The reviewed release-preparation pull request changes the public workspace and
 lockfile to `0.1.0`, documents the release, and passes:
 
 ```sh
-npm install --global npm@11.18.0
-npm ci
-npm run format:check
-npm run check
-npm test
-npm run release:check
-npm run release:pack -- -- --output .release
+npm install -g corepack
+corepack enable
+pnpm install --frozen-lockfile
+pnpm run format:check
+pnpm run check
+pnpm test
+pnpm run release:check
+pnpm run release:pack -- --output .release
 ```
 
 After merge, create and verify the tag before creating the GitHub release:
@@ -78,10 +79,12 @@ tag; if any byte must change, prepare a new version.
 ## Workflow and recovery
 
 The preparation job checks out the tag, fetches `origin/main`, configures the
-reviewed signer, installs Node 24 and npm 11.18.0, runs the full gate, and
-uploads the exact packed artifact. Only the environment-scoped publish job has
-`id-token: write`; it installs no dependencies before publishing the prepared
-artifact with provenance.
+reviewed signer, installs Node 24, the reviewed pnpm via Corepack, and
+npm@11.18.0, runs the full gate, and uploads the exact packed artifact. Only
+the environment-scoped publish job has `id-token: write`; it installs no
+dependencies and does not download pnpm before publishing the prepared
+artifact with provenance. Pack, registry lookup, and `npm publish` stay on
+the npm CLI so trusted-publisher OIDC and pack metadata stay identical.
 
 If a hardened release fails, rerun its failed jobs against the unchanged tag:
 
