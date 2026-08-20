@@ -38,8 +38,8 @@ importers:
   packages/webhooks:
     dependencies:
       '@pegma/spine':
-        specifier: 0.1.1
-        version: 0.1.1
+        specifier: 0.1.2
+        version: 0.1.2
       '@pegma/storage-core':
         specifier: 0.4.0
         version: 0.4.0
@@ -236,8 +236,8 @@ packages:
   '@oxc-project/types@0.139.0':
     resolution: {integrity: sha512-r9gHphtCs+1M7J0pw6Sn/hh/Wpa/iQrOOkrNAlVLF/gHq+/CJmHIWKKUUhdWjcD6CIa8idarspCsASiXCXvFUw==}
 
-  '@pegma/spine@0.1.1':
-    resolution: {integrity: sha512-EV0Zq8KJX7r7ybI+eIHUCAhnd261bveZykMQVmmZibSDRJVcd2bOuYCPvPg4wax7GmrUrdtVFJYEJqHl4PkhwQ==}
+  '@pegma/spine@0.1.2':
+    resolution: {integrity: sha512-jueFYJ3oJUacKdiERkEZ7R34xDMiEWXqn4MSA5bpTXzsXhWSap4EJUzKXtXnXuLPPjwJWLn5uoQe98kWQ6NS8A==}
     engines: {node: '>=22'}
 
   '@pegma/storage-azure-tables@0.4.0':
@@ -2057,7 +2057,7 @@ snapshots:
 
   '@oxc-project/types@0.139.0': {}
 
-  '@pegma/spine@0.1.1': {}
+  '@pegma/spine@0.1.2': {}
 
   '@pegma/storage-azure-tables@0.4.0':
     dependencies:
