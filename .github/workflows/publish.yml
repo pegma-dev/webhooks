@@ -18,6 +18,7 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     env:
+      CI: "1"
       RELEASE_TAG: ${{ github.event.release.tag_name }}
       RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
       RELEASE_COMMIT: ${{ github.sha }}
@@ -29,6 +30,7 @@ jobs:
         with:
           ref: refs/tags/${{ github.event.release.tag_name }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Fetch the protected release branch
         run: git fetch --no-tags origin main:refs/remotes/origin/main
@@ -50,7 +52,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24.18.0
-          registry-url: https://registry.npmjs.org
+          registry-url: https://registry.npmjs.org/
           package-manager-cache: false
 
       - name: Enable Corepack
@@ -66,15 +68,20 @@ jobs:
         run: pnpm run format:check && pnpm run check && pnpm test
 
       - name: Prepare and verify the release tarball
-        run: pnpm run release:pack -- --require-clean --require-main-ancestor --require-release-tag --expected-release-commit "${RELEASE_COMMIT}"
+        id: prepare-release
+        shell: bash
+        run: |
+          pnpm run release:pack -- --require-clean --require-main-ancestor --require-release-tag --expected-release-commit "${RELEASE_COMMIT}"
+          printf 'tarball=%s\n' ".release/pegma-webhooks-${RELEASE_TAG#v}.tgz" >> "${GITHUB_OUTPUT}"
 
       - name: Upload the prepared release
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: webhooks-release-${{ github.run_id }}
-          path: .release/
+          path: |
+            .release/package-manifest.json
+            ${{ steps.prepare-release.outputs.tarball }}
           if-no-files-found: error
-          include-hidden-files: true
           overwrite: true
           retention-days: 30
 
@@ -90,24 +97,33 @@ jobs:
       RELEASE_COMMIT: ${{ github.sha }}
 
     steps:
-      - name: Check out the exact release tag
+      - name: Check out the release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: refs/tags/${{ github.event.release.tag_name }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Set up Node.js and npm
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24.18.0
-          registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
       - name: Download the prepared release
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: webhooks-release-${{ github.run_id }}
-          path: .release
+          path: ${{ runner.temp }}/webhooks-release-${{ github.run_id }}
+
+      - name: Create a clean Node invocation directory
+        id: node-invocation-directory
+        shell: bash
+        run: printf 'path=%s\n' "$(mktemp -d "${RUNNER_TEMP}/webhooks-publisher-XXXXXX")" >> "${GITHUB_OUTPUT}"
 
       - name: Publish the verified prepared tarball
-        run: node scripts/release-package.mjs publish --expected-release-commit "${RELEASE_COMMIT}"
+        working-directory: ${{ steps.node-invocation-directory.outputs.path }}
+        run: >-
+          node "${GITHUB_WORKSPACE}/scripts/release-package.mjs" publish
+          --manifest "${RUNNER_TEMP}/webhooks-release-${GITHUB_RUN_ID}/package-manifest.json"
+          --expected-release-commit "${RELEASE_COMMIT}"
