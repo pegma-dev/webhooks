@@ -26,7 +26,7 @@ const REQUIRED_DEPENDENCIES = Object.freeze({
   "@pegma/storage-core": "0.4.0",
 });
 const PREPARED_MANIFEST_NAME = "package-manifest.json";
-const PUBLISH_ENVIRONMENT_NAMES = [
+const ISOLATED_NPM_ENVIRONMENT_NAMES = [
   "PATH",
   "HOME",
   "USERPROFILE",
@@ -49,7 +49,7 @@ const PUBLISH_ENVIRONMENT_NAMES = [
   "GITHUB_WORKFLOW_REF",
   "RUNNER_ENVIRONMENT",
 ];
-const WINDOWS_PUBLISH_ENVIRONMENT_NAMES = ["SystemRoot", "ComSpec"];
+const WINDOWS_NPM_ENVIRONMENT_NAMES = ["SystemRoot", "ComSpec"];
 
 function fail(message) {
   throw new Error(message);
@@ -506,10 +506,9 @@ function verifyPackedFiles(manifest, files) {
 }
 
 async function smokeTest(tarball) {
-  const directory = await mkdtemp(join(tmpdir(), "pegma-webhooks-smoke-"));
-  try {
+  await withIsolatedNpmEnvironment(async ({ cwd, env }) => {
     await writeFile(
-      join(directory, "package.json"),
+      join(cwd, "package.json"),
       '{"private":true,"type":"module"}\n',
     );
     runNpm(
@@ -519,20 +518,20 @@ async function smokeTest(tarball) {
         "--no-audit",
         "--no-fund",
         "--package-lock=false",
+        "--registry",
+        NPM_REGISTRY,
         tarball,
       ],
-      { capture: true, cwd: directory },
+      { capture: true, cwd, env },
     );
     for (const specifier of [PACKAGE_NAME]) {
       run(
         process.execPath,
         ["--input-type=module", "--eval", `await import("${specifier}")`],
-        { capture: true, cwd: directory },
+        { capture: true, cwd, env },
       );
     }
-  } finally {
-    await rm(directory, { force: true, recursive: true });
-  }
+  });
 }
 
 function expectedTarballName(version) {
@@ -745,22 +744,30 @@ async function verifyPreparedArtifact(options = {}) {
 
 export async function inspectPreparedRegistry(options = {}) {
   const { digest, prepared } = await verifyPreparedArtifact(options);
-  const existing = registryIntegrity(PACKAGE_NAME, prepared.package.version);
-  if (existing === null) {
-    process.stdout.write(
-      `${PACKAGE_NAME}@${prepared.package.version}: absent\n`,
+  return withIsolatedNpmEnvironment(async (npmOptions) => {
+    const existing = registryIntegrity(
+      PACKAGE_NAME,
+      prepared.package.version,
+      npmOptions,
     );
-    return "absent";
-  }
-  if (!safeEqual(existing, digest.integrity)) {
-    fail("the registry version exists with different integrity");
-  }
-  process.stdout.write(`${PACKAGE_NAME}@${prepared.package.version}: exact\n`);
-  return "exact";
+    if (existing === null) {
+      process.stdout.write(
+        `${PACKAGE_NAME}@${prepared.package.version}: absent\n`,
+      );
+      return "absent";
+    }
+    if (!safeEqual(existing, digest.integrity)) {
+      fail("the registry version exists with different integrity");
+    }
+    process.stdout.write(
+      `${PACKAGE_NAME}@${prepared.package.version}: exact\n`,
+    );
+    return "exact";
+  });
 }
 
 async function withIsolatedNpmEnvironment(callback) {
-  const directory = await mkdtemp(join(tmpdir(), "pegma-webhooks-publish-"));
+  const directory = await mkdtemp(join(tmpdir(), "pegma-webhooks-npm-"));
   const cwd = join(directory, "work");
   const userconfig = join(directory, "user.npmrc");
   const globalconfig = join(directory, "global.npmrc");
@@ -771,10 +778,8 @@ async function withIsolatedNpmEnvironment(callback) {
       writeFile(globalconfig, "", { mode: 0o600 }),
     ]);
     const names = [
-      ...PUBLISH_ENVIRONMENT_NAMES,
-      ...(process.platform === "win32"
-        ? WINDOWS_PUBLISH_ENVIRONMENT_NAMES
-        : []),
+      ...ISOLATED_NPM_ENVIRONMENT_NAMES,
+      ...(process.platform === "win32" ? WINDOWS_NPM_ENVIRONMENT_NAMES : []),
     ];
     const env = {};
     for (const name of names) {

@@ -22,8 +22,12 @@ vi.mock("node:child_process", () => ({
   spawnSync: spawnSyncMock,
 }));
 
-const { prepareRelease, publishPrepared, validateRepository } =
-  await import("./release-package.mjs");
+const {
+  inspectPreparedRegistry,
+  prepareRelease,
+  publishPrepared,
+  validateRepository,
+} = await import("./release-package.mjs");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PACKAGE_MANIFEST = JSON.parse(
@@ -38,7 +42,7 @@ const REVIEWED_DEPENDENCIES = {
   "@pegma/spine": "0.1.2",
   "@pegma/storage-core": "0.4.0",
 };
-const PUBLISH_ENVIRONMENT_NAMES = [
+const ISOLATED_NPM_ENVIRONMENT_NAMES = [
   "PATH",
   "HOME",
   "USERPROFILE",
@@ -90,6 +94,8 @@ const DISCARDED_ENVIRONMENT = {
   NO_PROXY: "registry.example.test",
   NPM_CONFIG_CACHE: "C:/untrusted/cache",
   NPM_TOKEN: "ambient-token",
+  RELEASE_COMMIT: COMMIT,
+  RELEASE_TAG,
   npm_config_registry: "https://registry.example.invalid/",
   UNRELATED_RELEASE_VALUE: "discarded",
 };
@@ -273,9 +279,60 @@ function useReleaseEnvironment() {
   vi.stubEnv("RELEASE_TAG", RELEASE_TAG);
 }
 
-function installPrepareProcessDouble(output, addEntry) {
+function useNpmEnvironmentFixtures() {
+  for (const [name, value] of Object.entries(PROVENANCE_ENVIRONMENT)) {
+    vi.stubEnv(name, value);
+  }
+  for (const [name, value] of Object.entries(DISCARDED_ENVIRONMENT)) {
+    vi.stubEnv(name, value);
+  }
+}
+
+function captureNpmCall(arguments_, options) {
+  return {
+    arguments: [...arguments_],
+    cwd: options.cwd,
+    cwdEntries: readdirSync(options.cwd),
+    environment: { ...options.env },
+    globalconfig: options.env.NPM_CONFIG_GLOBALCONFIG,
+    globalconfigContents: readFileSync(
+      options.env.NPM_CONFIG_GLOBALCONFIG,
+      "utf8",
+    ),
+    npmConfigKeys: Object.keys(options.env)
+      .filter((name) => /^npm_config_/iu.test(name))
+      .sort(),
+    userconfig: options.env.NPM_CONFIG_USERCONFIG,
+    userconfigContents: readFileSync(options.env.NPM_CONFIG_USERCONFIG, "utf8"),
+  };
+}
+
+function expectIsolatedNpmEnvironment(call) {
+  expect(call.npmConfigKeys).toEqual([
+    "NPM_CONFIG_GLOBALCONFIG",
+    "NPM_CONFIG_USERCONFIG",
+  ]);
+  expect(
+    Object.keys(call.environment).filter(
+      (name) => !ISOLATED_NPM_ENVIRONMENT_NAMES.includes(name),
+    ),
+  ).toEqual([]);
+  for (const [name, value] of Object.entries(PROVENANCE_ENVIRONMENT)) {
+    expect(call.environment[name]).toBe(value);
+  }
+  for (const name of Object.keys(DISCARDED_ENVIRONMENT)) {
+    expect(call.environment).not.toHaveProperty(name);
+  }
+  expect(call.userconfigContents).toBe("");
+  expect(call.globalconfigContents).toBe("");
+  expect(dirname(call.userconfig)).toBe(dirname(call.cwd));
+  expect(dirname(call.globalconfig)).toBe(dirname(call.cwd));
+  expect(call.userconfig).not.toBe(call.globalconfig);
+}
+
+function installPrepareProcessDouble(output, onSmokeInstall = () => {}) {
   let smokeInstallRan = false;
-  spawnSyncMock.mockImplementation((command, arguments_) => {
+  spawnSyncMock.mockImplementation((command, arguments_, options) => {
     if (isNpmCommand(command) && arguments_[0] === "pack") {
       const destination =
         arguments_[arguments_.indexOf("--pack-destination") + 1];
@@ -297,7 +354,7 @@ function installPrepareProcessDouble(output, addEntry) {
     }
     if (isNpmCommand(command) && arguments_[0] === "install") {
       smokeInstallRan = true;
-      addEntry();
+      onSmokeInstall({ arguments_, options });
       return processResult();
     }
     if (
@@ -393,6 +450,34 @@ describe("release preparation", () => {
     );
     expect(spawnSyncMock).not.toHaveBeenCalled();
   });
+
+  it("uses isolated npm settings for the smoke install", async () => {
+    useNpmEnvironmentFixtures();
+    const fixtureRoot = makeTemporaryDirectory();
+    const output = join(fixtureRoot, "artifact");
+    let installCall;
+    const smokeInstallRan = installPrepareProcessDouble(
+      output,
+      ({ arguments_, options }) => {
+        installCall = captureNpmCall(arguments_, options);
+      },
+    );
+
+    await prepareRelease({ root: ROOT, output });
+
+    expect(smokeInstallRan()).toBe(true);
+    expect(installCall).toBeDefined();
+    expect(installCall.arguments).toContain("--ignore-scripts");
+    expect(installCall.arguments).toContain(resolve(output, TARBALL_NAME));
+    const registryIndex = installCall.arguments.indexOf("--registry");
+    expect(registryIndex).toBeGreaterThan(-1);
+    expect(installCall.arguments[registryIndex + 1]).toBe(NPM_REGISTRY);
+    expect(installCall.cwdEntries).toEqual(["package.json"]);
+    expect(
+      resolve(installCall.cwd).startsWith(`${resolve(output)}${sep}`),
+    ).toBe(false);
+    expectIsolatedNpmEnvironment(installCall);
+  });
 });
 
 describe("release artifact inventory", () => {
@@ -432,6 +517,49 @@ describe("release artifact inventory", () => {
   }
 });
 
+describe("prepared registry inspection", () => {
+  it("uses isolated npm settings and the fixed registry", async () => {
+    useNpmEnvironmentFixtures();
+    const fixtureRoot = makeTemporaryDirectory();
+    const artifact = join(fixtureRoot, "artifact");
+    const { digest, manifest } = writePreparedArtifact(artifact);
+    let registryCall;
+
+    spawnSyncMock.mockImplementation((command, arguments_, options) => {
+      if (
+        command === "git" &&
+        arguments_[0] === "rev-parse" &&
+        arguments_[1] === "HEAD"
+      ) {
+        return processResult({ stdout: `${COMMIT}\n` });
+      }
+      if (isNpmCommand(command) && arguments_[0] === "view") {
+        registryCall = captureNpmCall(arguments_, options);
+        return processResult({
+          stdout: `${JSON.stringify(digest.integrity)}\n`,
+        });
+      }
+      throw new Error(
+        `unexpected process call: ${command} ${arguments_.join(" ")}`,
+      );
+    });
+
+    await expect(inspectPreparedRegistry({ manifest })).resolves.toBe("exact");
+
+    expect(registryCall).toBeDefined();
+    expect(registryCall.arguments).toEqual([
+      "view",
+      `@pegma/webhooks@${PACKAGE_VERSION}`,
+      "dist.integrity",
+      "--json",
+      "--registry",
+      NPM_REGISTRY,
+    ]);
+    expect(registryCall.cwdEntries).toEqual([]);
+    expectIsolatedNpmEnvironment(registryCall);
+  });
+});
+
 describe("prepared publishing", () => {
   it("requires the canonical prepared manifest name", async () => {
     useReleaseEnvironment();
@@ -455,12 +583,7 @@ describe("prepared publishing", () => {
 
   it("uses a clean working directory and controlled npm configuration", async () => {
     useReleaseEnvironment();
-    for (const [name, value] of Object.entries(PROVENANCE_ENVIRONMENT)) {
-      vi.stubEnv(name, value);
-    }
-    for (const [name, value] of Object.entries(DISCARDED_ENVIRONMENT)) {
-      vi.stubEnv(name, value);
-    }
+    useNpmEnvironmentFixtures();
     const fixtureRoot = makeTemporaryDirectory();
     const artifact = join(fixtureRoot, "artifact");
     const { digest, manifest, tarball } = writePreparedArtifact(artifact);
@@ -488,26 +611,7 @@ describe("prepared publishing", () => {
         });
       }
       if (isNpmCommand(command) && arguments_[0] === "publish") {
-        const npmConfigKeys = Object.keys(options.env)
-          .filter((name) => /^npm_config_/iu.test(name))
-          .sort();
-        publishCall = {
-          arguments: [...arguments_],
-          cwd: options.cwd,
-          cwdEntries: readdirSync(options.cwd),
-          globalconfig: options.env.NPM_CONFIG_GLOBALCONFIG,
-          globalconfigContents: readFileSync(
-            options.env.NPM_CONFIG_GLOBALCONFIG,
-            "utf8",
-          ),
-          environment: { ...options.env },
-          npmConfigKeys,
-          userconfig: options.env.NPM_CONFIG_USERCONFIG,
-          userconfigContents: readFileSync(
-            options.env.NPM_CONFIG_USERCONFIG,
-            "utf8",
-          ),
-        };
+        publishCall = captureNpmCall(arguments_, options);
         return processResult();
       }
       throw new Error(
@@ -537,28 +641,7 @@ describe("prepared publishing", () => {
     expect(
       resolve(publishCall.cwd).startsWith(`${resolve(artifact)}${sep}`),
     ).toBe(false);
-    expect(publishCall.npmConfigKeys).toEqual([
-      "NPM_CONFIG_GLOBALCONFIG",
-      "NPM_CONFIG_USERCONFIG",
-    ]);
-    expect(
-      Object.keys(publishCall.environment).filter(
-        (name) => !PUBLISH_ENVIRONMENT_NAMES.includes(name),
-      ),
-    ).toEqual([]);
-    for (const [name, value] of Object.entries(PROVENANCE_ENVIRONMENT)) {
-      expect(publishCall.environment[name]).toBe(value);
-    }
-    for (const name of Object.keys(DISCARDED_ENVIRONMENT)) {
-      expect(publishCall.environment).not.toHaveProperty(name);
-    }
-    expect(publishCall.environment).not.toHaveProperty("RELEASE_COMMIT");
-    expect(publishCall.environment).not.toHaveProperty("RELEASE_TAG");
-    expect(publishCall.userconfigContents).toBe("");
-    expect(publishCall.globalconfigContents).toBe("");
-    expect(dirname(publishCall.userconfig)).toBe(dirname(publishCall.cwd));
-    expect(dirname(publishCall.globalconfig)).toBe(dirname(publishCall.cwd));
-    expect(publishCall.userconfig).not.toBe(publishCall.globalconfig);
+    expectIsolatedNpmEnvironment(publishCall);
     expect(registryLookupCount).toBe(2);
   });
 });
