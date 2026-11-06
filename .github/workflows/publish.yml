@@ -18,7 +18,7 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     env:
-      CI: 1
+      CI: "1"
       RELEASE_TAG: ${{ github.event.release.tag_name }}
       RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
       RELEASE_COMMIT: ${{ github.sha }}
@@ -52,7 +52,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24.18.0
-          registry-url: https://registry.npmjs.org
+          registry-url: https://registry.npmjs.org/
           package-manager-cache: false
 
       - name: Enable Corepack
@@ -116,13 +116,13 @@ jobs:
           name: webhooks-release-${{ github.run_id }}
           path: ${{ runner.temp }}/webhooks-release-${{ github.run_id }}
 
-      - name: Create a clean publisher directory
-        id: publisher-directory
+      - name: Create a clean Node invocation directory
+        id: node-invocation-directory
         shell: bash
         run: printf 'path=%s\n' "$(mktemp -d "${RUNNER_TEMP}/webhooks-publisher-XXXXXX")" >> "${GITHUB_OUTPUT}"
 
       - name: Publish the verified prepared tarball
-        working-directory: ${{ steps.publisher-directory.outputs.path }}
+        working-directory: ${{ steps.node-invocation-directory.outputs.path }}
         run: >-
           node "${GITHUB_WORKSPACE}/scripts/release-package.mjs" publish
           --manifest "${RUNNER_TEMP}/webhooks-release-${GITHUB_RUN_ID}/package-manifest.json"

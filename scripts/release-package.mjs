@@ -21,8 +21,35 @@ const NODE_RANGE = ">=22";
 const NPM_REGISTRY = "https://registry.npmjs.org/";
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 const WORKSPACE_PACKAGES = ["packages/*"];
-const REQUIRED_DEPENDENCY_NAMES = ["@pegma/spine", "@pegma/storage-core"];
+const REQUIRED_DEPENDENCIES = Object.freeze({
+  "@pegma/spine": "0.1.2",
+  "@pegma/storage-core": "0.4.0",
+});
 const PREPARED_MANIFEST_NAME = "package-manifest.json";
+const PUBLISH_ENVIRONMENT_NAMES = [
+  "PATH",
+  "HOME",
+  "USERPROFILE",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "CI",
+  "ACTIONS_ID_TOKEN_REQUEST_URL",
+  "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+  "GITHUB_ACTIONS",
+  "GITHUB_EVENT_NAME",
+  "GITHUB_REF",
+  "GITHUB_REPOSITORY",
+  "GITHUB_REPOSITORY_ID",
+  "GITHUB_REPOSITORY_OWNER_ID",
+  "GITHUB_RUN_ATTEMPT",
+  "GITHUB_RUN_ID",
+  "GITHUB_SERVER_URL",
+  "GITHUB_SHA",
+  "GITHUB_WORKFLOW_REF",
+  "RUNNER_ENVIRONMENT",
+];
+const WINDOWS_PUBLISH_ENVIRONMENT_NAMES = ["SystemRoot", "ComSpec"];
 
 function fail(message) {
   throw new Error(message);
@@ -261,6 +288,22 @@ function lockDependenciesMatch(lockDependencies, required) {
   });
 }
 
+function dependencyPinsMatch(actual, required) {
+  if (actual === null || typeof actual !== "object" || Array.isArray(actual)) {
+    return false;
+  }
+  const requiredNames = Object.keys(required).sort();
+  if (!sameJson(Object.keys(actual).sort(), requiredNames)) {
+    return false;
+  }
+  return requiredNames.every(
+    (name) =>
+      typeof actual[name] === "string" &&
+      EXACT_PIN.test(actual[name]) &&
+      actual[name] === required[name],
+  );
+}
+
 export async function validateRepository(options = {}) {
   const root = resolve(options.root ?? defaultRoot());
   const rootManifest = await readJson(join(root, "package.json"));
@@ -280,18 +323,6 @@ export async function validateRepository(options = {}) {
   )
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name);
-  const runtimeDependencies = manifest.dependencies;
-  const runtimeDependenciesAreExact =
-    runtimeDependencies !== null &&
-    typeof runtimeDependencies === "object" &&
-    !Array.isArray(runtimeDependencies) &&
-    sameJson(
-      Object.keys(runtimeDependencies).sort(),
-      [...REQUIRED_DEPENDENCY_NAMES].sort(),
-    ) &&
-    Object.values(runtimeDependencies).every(
-      (pin) => typeof pin === "string" && EXACT_PIN.test(pin),
-    );
 
   if (
     rootManifest.name !== "webhooks" ||
@@ -319,8 +350,11 @@ export async function validateRepository(options = {}) {
     fail(`${PACKAGE_DIRECTORY}/package.json has invalid public metadata`);
   }
   if (
-    !runtimeDependenciesAreExact ||
-    !lockDependenciesMatch(lockDependencies?.dependencies, runtimeDependencies)
+    !dependencyPinsMatch(manifest.dependencies, REQUIRED_DEPENDENCIES) ||
+    !lockDependenciesMatch(
+      lockDependencies?.dependencies,
+      REQUIRED_DEPENDENCIES,
+    )
   ) {
     fail("Pegma runtime dependencies must match the reviewed exact pins");
   }
@@ -513,8 +547,20 @@ async function verifyReleaseArtifactInventory(directory, tarballName) {
     !sameJson(actualNames, expectedNames) ||
     entries.some((entry) => !entry.isFile())
   ) {
+    const actualEntries = entries
+      .map((entry) => {
+        const type = entry.isFile()
+          ? "file"
+          : entry.isDirectory()
+            ? "directory"
+            : entry.isSymbolicLink()
+              ? "link"
+              : "other";
+        return `${entry.name} (${type})`;
+      })
+      .sort();
     fail(
-      `release artifact directory must contain only regular files named ${expectedNames.join(" and ")}`,
+      `release artifact inventory mismatch: expected regular files ${JSON.stringify(expectedNames)}; found ${JSON.stringify(actualEntries)}`,
     );
   }
 }
@@ -724,11 +770,19 @@ async function withIsolatedNpmEnvironment(callback) {
       writeFile(userconfig, "", { mode: 0o600 }),
       writeFile(globalconfig, "", { mode: 0o600 }),
     ]);
-    const env = Object.fromEntries(
-      Object.entries(process.env).filter(
-        ([name]) => !/^npm_config_/iu.test(name),
-      ),
-    );
+    const names = [
+      ...PUBLISH_ENVIRONMENT_NAMES,
+      ...(process.platform === "win32"
+        ? WINDOWS_PUBLISH_ENVIRONMENT_NAMES
+        : []),
+    ];
+    const env = {};
+    for (const name of names) {
+      const value = process.env[name];
+      if (value !== undefined) {
+        env[name] = value;
+      }
+    }
     env.NPM_CONFIG_USERCONFIG = userconfig;
     env.NPM_CONFIG_GLOBALCONFIG = globalconfig;
     return await callback({ cwd, env });

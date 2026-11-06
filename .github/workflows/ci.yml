@@ -18,7 +18,7 @@ jobs:
     name: Node.js ${{ matrix.node-version }}
     runs-on: ubuntu-latest
     env:
-      CI: 1
+      CI: "1"
     strategy:
       fail-fast: false
       matrix:
