@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    include: ["packages/*/src/**/*.test.ts"],
+    include: ["packages/*/src/**/*.test.ts", "scripts/**/*.test.mjs"],
     exclude: ["**/dist/**", "**/node_modules/**"],
     globalSetup: ["./test/azurite.ts"],
     testTimeout: 30_000,

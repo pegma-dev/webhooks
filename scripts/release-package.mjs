@@ -18,12 +18,11 @@ const PACKAGE_DIRECTORY = "packages/webhooks";
 const PACKAGE_MANAGER = "pnpm@10.34.5";
 const REPOSITORY_URL = "git+https://github.com/pegma-dev/webhooks.git";
 const NODE_RANGE = ">=22";
+const NPM_REGISTRY = "https://registry.npmjs.org/";
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 const WORKSPACE_PACKAGES = ["packages/*"];
-const REQUIRED_DEPENDENCIES = {
-  "@pegma/spine": "0.1.1",
-  "@pegma/storage-core": "0.4.0",
-};
+const REQUIRED_DEPENDENCY_NAMES = ["@pegma/spine", "@pegma/storage-core"];
+const PREPARED_MANIFEST_NAME = "package-manifest.json";
 
 function fail(message) {
   throw new Error(message);
@@ -33,7 +32,7 @@ function run(command, arguments_, options = {}) {
   const result = spawnSync(command, arguments_, {
     cwd: options.cwd,
     encoding: "utf8",
-    env: process.env,
+    env: options.env ?? process.env,
     shell: options.shell ?? false,
     stdio: options.capture ? "pipe" : "inherit",
   });
@@ -281,6 +280,18 @@ export async function validateRepository(options = {}) {
   )
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name);
+  const runtimeDependencies = manifest.dependencies;
+  const runtimeDependenciesAreExact =
+    runtimeDependencies !== null &&
+    typeof runtimeDependencies === "object" &&
+    !Array.isArray(runtimeDependencies) &&
+    sameJson(
+      Object.keys(runtimeDependencies).sort(),
+      [...REQUIRED_DEPENDENCY_NAMES].sort(),
+    ) &&
+    Object.values(runtimeDependencies).every(
+      (pin) => typeof pin === "string" && EXACT_PIN.test(pin),
+    );
 
   if (
     rootManifest.name !== "webhooks" ||
@@ -308,11 +319,8 @@ export async function validateRepository(options = {}) {
     fail(`${PACKAGE_DIRECTORY}/package.json has invalid public metadata`);
   }
   if (
-    !sameJson(manifest.dependencies, REQUIRED_DEPENDENCIES) ||
-    !lockDependenciesMatch(
-      lockDependencies?.dependencies,
-      REQUIRED_DEPENDENCIES,
-    )
+    !runtimeDependenciesAreExact ||
+    !lockDependenciesMatch(lockDependencies?.dependencies, runtimeDependencies)
   ) {
     fail("Pegma runtime dependencies must match the reviewed exact pins");
   }
@@ -493,6 +501,24 @@ async function smokeTest(tarball) {
   }
 }
 
+function expectedTarballName(version) {
+  return `pegma-webhooks-${version}.tgz`;
+}
+
+async function verifyReleaseArtifactInventory(directory, tarballName) {
+  const expectedNames = [PREPARED_MANIFEST_NAME, tarballName].sort();
+  const entries = await readdir(directory, { withFileTypes: true });
+  const actualNames = entries.map((entry) => entry.name).sort();
+  if (
+    !sameJson(actualNames, expectedNames) ||
+    entries.some((entry) => !entry.isFile())
+  ) {
+    fail(
+      `release artifact directory must contain only regular files named ${expectedNames.join(" and ")}`,
+    );
+  }
+}
+
 export async function prepareRelease(options = {}) {
   const { manifest, root } = await validateRepository(options);
   const output = resolve(root, options.output ?? ".release");
@@ -546,15 +572,24 @@ export async function prepareRelease(options = {}) {
         .sort((left, right) => left.path.localeCompare(right.path)),
     },
   };
-  const preparedPath = join(output, "package-manifest.json");
+  const preparedPath = join(output, PREPARED_MANIFEST_NAME);
   await writeFile(preparedPath, `${JSON.stringify(prepared, null, 2)}\n`);
+  await verifyReleaseArtifactInventory(output, basename(tarball));
   return preparedPath;
 }
 
-function registryIntegrity(name, version) {
+function registryIntegrity(name, version, options = {}) {
   const result = runNpm(
-    ["view", `${name}@${version}`, "dist.integrity", "--json"],
+    [
+      "view",
+      `${name}@${version}`,
+      "dist.integrity",
+      "--json",
+      "--registry",
+      NPM_REGISTRY,
+    ],
     {
+      ...options,
       allowFailure: true,
       capture: true,
     },
@@ -572,8 +607,11 @@ function registryIntegrity(name, version) {
   fail("npm registry lookup failed");
 }
 
-function requireTrustedPublishingNpm() {
-  const version = runNpm(["--version"], { capture: true }).stdout.trim();
+function requireTrustedPublishingNpm(options = {}) {
+  const version = runNpm(["--version"], {
+    ...options,
+    capture: true,
+  }).stdout.trim();
   const match = /^(\d+)\.(\d+)\.(\d+)(?:-.+)?$/u.exec(version);
   if (match === null) {
     fail(`could not parse npm version ${version}`);
@@ -593,9 +631,9 @@ function wait(milliseconds) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }
 
-function confirmRegistryIntegrity(name, version, expected) {
+function confirmRegistryIntegrity(name, version, expected, options = {}) {
   for (let attempt = 0; attempt < 6; attempt += 1) {
-    const actual = registryIntegrity(name, version);
+    const actual = registryIntegrity(name, version, options);
     if (actual !== null && safeEqual(actual, expected)) {
       return;
     }
@@ -607,13 +645,19 @@ function confirmRegistryIntegrity(name, version, expected) {
 }
 
 async function verifyPreparedArtifact(options = {}) {
+  const root = resolve(options.root ?? defaultRoot());
   const path = resolve(
-    options.manifest ?? join(".release", "package-manifest.json"),
+    options.manifest ?? join(root, ".release", PREPARED_MANIFEST_NAME),
   );
-  const prepared = await readJson(path);
   const sourceManifest = await readJson(
-    join(defaultRoot(), PACKAGE_DIRECTORY, "package.json"),
+    join(root, PACKAGE_DIRECTORY, "package.json"),
   );
+  const expectedTarball = expectedTarballName(sourceManifest.version);
+  if (basename(path) !== PREPARED_MANIFEST_NAME) {
+    fail(`prepared manifest must be named ${PREPARED_MANIFEST_NAME}`);
+  }
+  await verifyReleaseArtifactInventory(dirname(path), expectedTarball);
+  const prepared = await readJson(path);
   if (
     prepared.schemaVersion !== 1 ||
     prepared.package?.name !== PACKAGE_NAME ||
@@ -630,13 +674,12 @@ async function verifyPreparedArtifact(options = {}) {
   }
   const currentCommit = run("git", ["rev-parse", "HEAD"], {
     capture: true,
-    cwd: defaultRoot(),
+    cwd: root,
   }).stdout.trim();
   if (!safeEqual(currentCommit, prepared.gitCommit)) {
     fail("prepared release commit does not match the checkout");
   }
   verifyPackedFiles(sourceManifest, prepared.package.files);
-  const expectedTarball = `pegma-webhooks-${prepared.package.version}.tgz`;
   if (prepared.package.tarball !== expectedTarball) {
     fail("prepared tarball name does not match its package version");
   }
@@ -670,6 +713,30 @@ export async function inspectPreparedRegistry(options = {}) {
   return "exact";
 }
 
+async function withIsolatedNpmEnvironment(callback) {
+  const directory = await mkdtemp(join(tmpdir(), "pegma-webhooks-publish-"));
+  const cwd = join(directory, "work");
+  const userconfig = join(directory, "user.npmrc");
+  const globalconfig = join(directory, "global.npmrc");
+  try {
+    await mkdir(cwd);
+    await Promise.all([
+      writeFile(userconfig, "", { mode: 0o600 }),
+      writeFile(globalconfig, "", { mode: 0o600 }),
+    ]);
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(
+        ([name]) => !/^npm_config_/iu.test(name),
+      ),
+    );
+    env.NPM_CONFIG_USERCONFIG = userconfig;
+    env.NPM_CONFIG_GLOBALCONFIG = globalconfig;
+    return await callback({ cwd, env });
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+}
+
 export async function publishPrepared(options = {}) {
   if (
     process.env.GITHUB_ACTIONS !== "true" ||
@@ -677,9 +744,7 @@ export async function publishPrepared(options = {}) {
   ) {
     fail("release publishing is restricted to a GitHub release workflow");
   }
-  requireTrustedPublishingNpm();
-  const { digest, path, prepared, tarball } =
-    await verifyPreparedArtifact(options);
+  const { digest, prepared, tarball } = await verifyPreparedArtifact(options);
   const expectedCommit =
     options.expectedReleaseCommit ?? process.env.RELEASE_COMMIT;
   const releaseTag = options.releaseTag ?? process.env.RELEASE_TAG;
@@ -691,22 +756,40 @@ export async function publishPrepared(options = {}) {
   ) {
     fail("prepared release metadata does not match the release event");
   }
-  const existing = registryIntegrity(PACKAGE_NAME, prepared.package.version);
-  if (existing !== null) {
-    if (!safeEqual(existing, digest.integrity)) {
-      fail("the registry version exists with different integrity");
+  await withIsolatedNpmEnvironment(async (npmOptions) => {
+    requireTrustedPublishingNpm(npmOptions);
+    const existing = registryIntegrity(
+      PACKAGE_NAME,
+      prepared.package.version,
+      npmOptions,
+    );
+    if (existing !== null) {
+      if (!safeEqual(existing, digest.integrity)) {
+        fail("the registry version exists with different integrity");
+      }
+      process.stdout.write("Registry integrity matches; skipping publish.\n");
+      return;
     }
-    process.stdout.write("Registry integrity matches; skipping publish.\n");
-    return;
-  }
-  runNpm(["publish", tarball, "--access", "public", "--provenance"], {
-    cwd: dirname(path),
+    runNpm(
+      [
+        "publish",
+        tarball,
+        "--access",
+        "public",
+        "--provenance",
+        "--ignore-scripts",
+        "--registry",
+        NPM_REGISTRY,
+      ],
+      npmOptions,
+    );
+    confirmRegistryIntegrity(
+      PACKAGE_NAME,
+      prepared.package.version,
+      digest.integrity,
+      npmOptions,
+    );
   });
-  confirmRegistryIntegrity(
-    PACKAGE_NAME,
-    prepared.package.version,
-    digest.integrity,
-  );
 }
 
 function parseArguments(arguments_) {
