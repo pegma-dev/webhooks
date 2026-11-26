@@ -25,10 +25,10 @@
     "@azure/data-tables": "^13.3.1",
     "@pegma/storage-azure-tables": "0.4.0",
     "@types/node": "^26.6.6",
-    "azurite": "^3.37.0",
+    "azurite": "^3.38.0",
     "prettier": "^3.10.1",
     "typescript": "^7.0.2",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.1"
   },
   "pnpm": {
     "overrides": {
